@@ -4,9 +4,9 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `mysql-connector-j`, `spring-boot-starter-web`, and `spring-boot-starter-validation` added to the build.
-- [ ] `application.yaml` has working MySQL, Redis, and RocketMQ connection config (matching `docker-compose.yaml`: db `taskdb`, user `taskuser`).
-- [ ] `init.sql` creates the `account` table (userId PK, balance `DECIMAL(19,4)` non-negative, timestamps) and the `transfer` table (id PK, sender, receiver, amount `DECIMAL(19,4)`, status, `request_id` UNIQUE, reversal linkage, created_at) with indexes on sender, receiver, created_at.
-- [ ] `docker compose up -d` then app start succeeds; the existing `contextLoads` test passes against real infra.
+- [x] `mysql-connector-j`, `spring-boot-starter-web`, and `spring-boot-starter-validation` added to the build.
+- [x] `application.yaml` has working MySQL, Redis, and RocketMQ connection config (matching `docker-compose.yaml`: db `taskdb`, user `taskuser`).
+- [x] `init.sql` creates the `account` table (userId PK, balance `DECIMAL(19,4)` non-negative, timestamps) and the `transfer` table (id PK, sender, receiver, amount `DECIMAL(19,4)`, status, `request_id` UNIQUE, reversal linkage, created_at) with indexes on sender, receiver, created_at.
+- [x] `docker compose up -d` then app start succeeds; the existing `contextLoads` test passes against real infra.

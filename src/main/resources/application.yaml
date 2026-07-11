@@ -2,8 +2,24 @@ spring:
   application:
     name: demo
 
-# define mysql properties here
+  datasource:
+    url: jdbc:mysql://localhost:3306/taskdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: taskuser
+    password: taskpass
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      pool-name: balance-transfer-pool
+      maximum-pool-size: 10
 
-# define redis properties here
+  data:
+    redis:
+      host: localhost
+      port: 6379
 
-# define rocketmq properties here
+# RocketMQ is driven by the raw rocketmq-client (wired in ticket 06); these are custom properties.
+rocketmq:
+  name-server: localhost:9876
+  producer:
+    group: balance-transfer-producer
+  topic:
+    transfer: transfer-events
