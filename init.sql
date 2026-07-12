@@ -29,3 +29,15 @@ CREATE TABLE IF NOT EXISTS transfer (
     CONSTRAINT fk_transfer_to FOREIGN KEY (to_user_id) REFERENCES account (user_id),
     CONSTRAINT fk_transfer_reversal FOREIGN KEY (reversal_of) REFERENCES transfer (id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
+
+-- Async side-effect log written by the RocketMQ consumer (ticket 06).
+-- UNIQUE (event_type, transfer_id) makes redelivery idempotent via INSERT IGNORE.
+CREATE TABLE IF NOT EXISTS audit_log (
+    id          BIGINT       NOT NULL AUTO_INCREMENT,
+    event_type  VARCHAR(32)  NOT NULL,
+    transfer_id BIGINT       NOT NULL,
+    payload     TEXT         NULL,
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_audit_event (event_type, transfer_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;

@@ -18,6 +18,7 @@ spring:
 
 # RocketMQ is driven by the raw rocketmq-client (wired in ticket 06); these are custom properties.
 rocketmq:
+  enabled: true
   name-server: localhost:9876
   producer:
     group: balance-transfer-producer

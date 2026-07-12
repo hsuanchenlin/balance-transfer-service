@@ -7,6 +7,8 @@ import com.example.demo.exception.UserNotFoundException;
 import com.example.demo.model.TransferRequest;
 import com.example.demo.model.TransferResponse;
 import com.example.demo.cache.BalanceCache;
+import com.example.demo.event.TransferCompletedEvent;
+import com.example.demo.event.TransferEventPublisher;
 import com.example.demo.repository.AccountRepository;
 import com.example.demo.repository.TransferRepository;
 import org.springframework.dao.DuplicateKeyException;
@@ -23,12 +25,14 @@ public class TransferService {
     private final AccountRepository accounts;
     private final TransferRepository transfers;
     private final BalanceCache balanceCache;
+    private final TransferEventPublisher eventPublisher;
 
     public TransferService(AccountRepository accounts, TransferRepository transfers,
-                           BalanceCache balanceCache) {
+                           BalanceCache balanceCache, TransferEventPublisher eventPublisher) {
         this.accounts = accounts;
         this.transfers = transfers;
         this.balanceCache = balanceCache;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
@@ -85,18 +89,21 @@ public class TransferService {
             // (the balance changes above are undone) so the transfer applies once.
             throw new DuplicateRequestException(requestId);
         }
-        // Invalidate the read-path cache only after the DB commit, so a concurrent
-        // read can't repopulate it with this transaction's uncommitted balances.
-        evictAfterCommit(from, to);
+        // Run side-effects only after the DB commit: invalidate the read-path cache
+        // (so a concurrent read can't repopulate it with uncommitted balances) and
+        // publish the event. The write transaction never blocks on message delivery.
+        TransferCompletedEvent event = new TransferCompletedEvent(transferId, from, to, request.amount());
+        afterCommit(from, to, event);
         return new TransferResponse(transferId, "COMPLETED");
     }
 
-    private void evictAfterCommit(String from, String to) {
+    private void afterCommit(String from, String to, TransferCompletedEvent event) {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
                 balanceCache.evict(from);
                 balanceCache.evict(to);
+                eventPublisher.publishCompleted(event);
             }
         });
     }

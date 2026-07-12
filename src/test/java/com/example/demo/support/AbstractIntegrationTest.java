@@ -6,6 +6,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.test.context.TestPropertySource;
 
 import java.util.Set;
 
@@ -23,6 +24,7 @@ import java.util.Set;
  * container seeded with {@code init.sql} — the tests themselves need no changes.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@TestPropertySource(properties = "rocketmq.enabled=false")
 public abstract class AbstractIntegrationTest {
 
     @Autowired
@@ -36,6 +38,7 @@ public abstract class AbstractIntegrationTest {
 
     @BeforeEach
     void cleanState() {
+        jdbc.sql("DELETE FROM audit_log").update();
         jdbc.sql("DELETE FROM transfer").update();
         jdbc.sql("DELETE FROM account").update();
         Set<String> keys = redis.keys("balance:*");
