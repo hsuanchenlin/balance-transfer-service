@@ -4,12 +4,15 @@ import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
+
+import java.util.Set;
 
 /**
  * Base for endpoint integration tests. Boots the full application against the real
  * MySQL from the project's {@code docker compose} stack (localhost:3306) and cleans
- * the tables before each test for isolation.
+ * the tables and balance cache before each test for isolation.
  *
  * <p>Prerequisite: {@code docker compose up -d} must be running.
  *
@@ -28,9 +31,16 @@ public abstract class AbstractIntegrationTest {
     @Autowired
     protected JdbcClient jdbc;
 
+    @Autowired
+    protected StringRedisTemplate redis;
+
     @BeforeEach
-    void cleanDatabase() {
+    void cleanState() {
         jdbc.sql("DELETE FROM transfer").update();
         jdbc.sql("DELETE FROM account").update();
+        Set<String> keys = redis.keys("balance:*");
+        if (keys != null && !keys.isEmpty()) {
+            redis.delete(keys);
+        }
     }
 }

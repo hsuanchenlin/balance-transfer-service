@@ -6,11 +6,14 @@ import com.example.demo.exception.SelfTransferException;
 import com.example.demo.exception.UserNotFoundException;
 import com.example.demo.model.TransferRequest;
 import com.example.demo.model.TransferResponse;
+import com.example.demo.cache.BalanceCache;
 import com.example.demo.repository.AccountRepository;
 import com.example.demo.repository.TransferRepository;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.Optional;
 
@@ -19,10 +22,13 @@ public class TransferService {
 
     private final AccountRepository accounts;
     private final TransferRepository transfers;
+    private final BalanceCache balanceCache;
 
-    public TransferService(AccountRepository accounts, TransferRepository transfers) {
+    public TransferService(AccountRepository accounts, TransferRepository transfers,
+                           BalanceCache balanceCache) {
         this.accounts = accounts;
         this.transfers = transfers;
+        this.balanceCache = balanceCache;
     }
 
     /**
@@ -79,7 +85,20 @@ public class TransferService {
             // (the balance changes above are undone) so the transfer applies once.
             throw new DuplicateRequestException(requestId);
         }
+        // Invalidate the read-path cache only after the DB commit, so a concurrent
+        // read can't repopulate it with this transaction's uncommitted balances.
+        evictAfterCommit(from, to);
         return new TransferResponse(transferId, "COMPLETED");
+    }
+
+    private void evictAfterCommit(String from, String to) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                balanceCache.evict(from);
+                balanceCache.evict(to);
+            }
+        });
     }
 
     private void debitOrThrow(String from, TransferRequest request) {
