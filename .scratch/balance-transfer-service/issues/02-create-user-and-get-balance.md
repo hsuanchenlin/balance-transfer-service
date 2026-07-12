@@ -4,11 +4,11 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `POST /users` creates a user with a validated non-negative initial balance and returns `201`.
-- [ ] Creating a user with an existing userId returns `409`.
-- [ ] `GET /users/{userId}/balance` returns `200` with the balance; an unknown user returns `404`.
-- [ ] Invalid input (missing fields, negative/zero-scale-violating balance) returns `400`.
-- [ ] A `@RestControllerAdvice` maps domain errors to the consistent JSON body `{timestamp, status, error, message, path}`.
-- [ ] Testcontainers (MySQL) integration harness is in place; endpoint tests cover the happy path and each error code.
+- [x] `POST /users` creates a user with a validated non-negative initial balance and returns `201`.
+- [x] Creating a user with an existing userId returns `409`.
+- [x] `GET /users/{userId}/balance` returns `200` with the balance; an unknown user returns `404`.
+- [x] Invalid input (missing fields, negative/zero-scale-violating balance) returns `400`.
+- [x] A `@RestControllerAdvice` maps domain errors to the consistent JSON body `{timestamp, status, error, message, path}`.
+- [~] Integration harness in place (endpoint tests cover happy path + each error code) via `*IT` + maven-failsafe (`mvn verify`). **Deviation:** backed by the compose MySQL, not Testcontainers — this environment's Docker Engine 29.x is incompatible with the docker-java client bundled in the current Testcontainers (API handshake returns HTTP 400). Base class documents the one-line swap once the env is fixed.
