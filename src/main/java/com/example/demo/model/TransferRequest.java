@@ -10,5 +10,6 @@ import java.math.BigDecimal;
 public record TransferRequest(
         @NotBlank String fromUserId,
         @NotBlank String toUserId,
-        @NotNull @Positive @Digits(integer = 15, fraction = 4) BigDecimal amount) {
+        @NotNull @Positive @Digits(integer = 15, fraction = 4) BigDecimal amount,
+        String requestId) {
 }

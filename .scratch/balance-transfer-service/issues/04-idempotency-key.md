@@ -4,8 +4,8 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `POST /transfers` accepts a `requestId`; a UNIQUE constraint enforces at-most-once application.
-- [ ] A duplicate `requestId` returns the original transfer's outcome (or `409`) without applying a second transfer.
-- [ ] Test: firing the same `requestId` twice (sequentially and concurrently) results in exactly one balance change.
+- [x] `POST /transfers` accepts a `requestId`; a UNIQUE constraint enforces at-most-once application.
+- [x] A duplicate `requestId` returns the original transfer's outcome (sequential retry replays the original id; a concurrent duplicate is rolled back and rejected `409`) without applying a second transfer.
+- [x] Test: firing the same `requestId` twice sequentially (replays original id, balance moves once) and 16× concurrently (exactly one balance change).

@@ -27,6 +27,11 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.CONFLICT, ex.getMessage(), req);
     }
 
+    @ExceptionHandler(DuplicateRequestException.class)
+    public ResponseEntity<ApiError> handleDuplicateRequest(DuplicateRequestException ex, HttpServletRequest req) {
+        return build(HttpStatus.CONFLICT, ex.getMessage(), req);
+    }
+
     @ExceptionHandler(SelfTransferException.class)
     public ResponseEntity<ApiError> handleSelfTransfer(SelfTransferException ex, HttpServletRequest req) {
         return build(HttpStatus.BAD_REQUEST, ex.getMessage(), req);
