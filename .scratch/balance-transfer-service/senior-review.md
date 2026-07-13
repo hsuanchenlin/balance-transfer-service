@@ -52,6 +52,8 @@ are robustness/consistency/performance refinements, prioritized.
 5. **RocketMQ consumer group is hardcoded** (`"balance-transfer-consumer"` in
    `RocketMqConfig`) while the producer group comes from yaml. Move to
    `rocketmq.consumer.group` for symmetry.
+   -> Status: FIXED in iteration 3 - consumer group now injected from
+   `rocketmq.consumer.group` in `application.yaml`, mirroring the producer.
 
 6. **History query scalability.** `WHERE from_user_id = :u OR to_user_id = :u` defeats
    single-column indexes (index-merge at best); `countByUser` repeats the scan every
@@ -59,8 +61,15 @@ are robustness/consistency/performance refinements, prioritized.
    the two indexes or an explicit README note that keyset pagination + UNION is the
    scale evolution (spec already lists keyset as out of scope). Prefer the README note
    unless benchmarks justify the rewrite.
+   -> Status: DOCUMENTED in iteration 3 (README note chosen, per the recommendation
+   above) - new README section "Known limits and scale evolutions" plus a javadoc
+   pointer on `TransferRepository.listByUser`.
 
 ## P3 - accepted tradeoffs (document, don't change)
+
+-> Status: DOCUMENTED in iteration 3 - the first three now live in the README
+section "Known limits and scale evolutions"; the `exists()` item stays as-is by
+design.
 
 - **Cache-aside stale-write race**: `getBalance` reads DB then `put`s; a transfer
   committing between the two can leave a stale cache entry until the 5-min TTL.

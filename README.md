@@ -138,3 +138,12 @@ Ubiquitous language is fixed in [CONTEXT.md](CONTEXT.md); the schema is in [init
 ## Tech-choice note
 
 `JdbcClient` over JPA on purpose: the whole design rests on *exact* SQL - the conditional-update guards, lock ordering, and the guarded status flip. Explicit SQL keeps those front and center instead of behind an ORM. `SELECT … FOR UPDATE` would give equivalent correctness to the conditional update and is the main alternative (see ADR-0001).
+
+## Known limits and scale evolutions
+
+Deliberate trade-offs at homework scale, with the production evolution named for each:
+
+- **History query**: `WHERE from_user_id = :u OR to_user_id = :u` defeats single-column indexes (MySQL manages an index merge at best), and the `COUNT(*)` for page metadata repeats that scan on every page. The evolution is a `UNION ALL` over the two indexed halves plus keyset pagination; the spec lists keyset as out of scope, so the OR-query stays for readability.
+- **Offset pagination drift**: a row inserted while a client pages can shift entries between pages. Keyset pagination (`WHERE (created_at, id) < (:cursor...)`) is the same evolution as above.
+- **Cache-aside stale-read race**: `getBalance` reads MySQL then `put`s into Redis; a transfer committing between those two steps can leave a stale cached balance until the next eviction or the 5-minute TTL. This is the classic cache-aside window; the TTL bounds it, and no decision ever reads the cache.
+- **Best-effort event publish**: a crash between the DB commit and the RocketMQ send loses that event (audit log misses one row). The evolution is a transactional outbox, called out in section 4 and in the publisher code.

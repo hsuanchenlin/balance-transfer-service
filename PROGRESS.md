@@ -82,6 +82,8 @@ A staff-level review of the whole codebase lives in `.scratch/balance-transfer-s
 - **Consistent error model:** malformed JSON, unknown routes, unsupported methods, and unexpected 500s now all return the `ApiError` shape via new `GlobalExceptionHandler` handlers (`ErrorModelIT`).
 - **Defensive credit:** `TransferService` throws if a credit touches 0 rows instead of silently dropping money (unreachable today, invariant for future refactors).
 - **Idempotency payload validation:** replaying a `requestId` with different parties or amount is rejected with `422` (`IdempotencyConflictException`) instead of silently returning the original result - Stripe's idempotency-key contract (`TransferIdempotencyIT`).
+- **Config symmetry:** the RocketMQ consumer group now comes from `rocketmq.consumer.group` in `application.yaml` instead of a hardcoded string, mirroring the producer group.
+- **Documented limits:** new README section "Known limits and scale evolutions" (history OR-query vs UNION ALL + keyset, offset-paging drift, cache-aside stale-read window, best-effort publish vs outbox), closing the last review-backlog items.
 - **Interview prep:** `docs/interview-qa.md` - code walkthrough + answers to the 15 design questions an interviewer would ask.
 
 ## To continue (workflow for future changes)

@@ -31,10 +31,11 @@ public class RocketMqConfig {
 
     @Bean(destroyMethod = "shutdown")
     public DefaultMQPushConsumer transferConsumer(@Value("${rocketmq.name-server}") String nameServer,
+                                                  @Value("${rocketmq.consumer.group}") String group,
                                                   @Value("${rocketmq.topic.transfer}") String topic,
                                                   TransferEventHandler handler,
                                                   ObjectMapper mapper) throws Exception {
-        DefaultMQPushConsumer consumer = new DefaultMQPushConsumer("balance-transfer-consumer");
+        DefaultMQPushConsumer consumer = new DefaultMQPushConsumer(group);
         consumer.setNamesrvAddr(nameServer);
         consumer.subscribe(topic, "*");
         consumer.registerMessageListener((MessageListenerConcurrently) (messages, context) -> {

@@ -92,6 +92,10 @@ public class TransferRepository {
      * Transfers the user was involved in as sender <em>or</em> receiver, newest
      * first, one page at a time. {@code created_at DESC, id DESC} gives a stable
      * total order even when rows share a timestamp.
+     *
+     * <p>The {@code OR} predicate caps out at an index merge; at scale the
+     * evolution is a {@code UNION ALL} over the two indexed halves plus keyset
+     * pagination (see README, "Known limits and scale evolutions").
      */
     public List<TransferHistoryItem> listByUser(String userId, int size, long offset) {
         return jdbc.sql("SELECT id, from_user_id, to_user_id, amount, status, reversal_of, created_at "
