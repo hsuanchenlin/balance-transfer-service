@@ -21,7 +21,7 @@ A RESTful balance-transfer service (Spring Boot 3 / Java 21, MySQL + Redis + Roc
 All five assignment endpoints are implemented; README/HELP/curl submission docs are written.
 
 **Tests:** 42 pass + 1 documented skip via `mvn verify` (surefire 8 unit + failsafe 35 IT).
-**Git:** **PR #1** (https://github.com/hsuanchenlin/balance-transfer-service/pull/1) was **merged into `main`** on 2026-07-13 (merge commit `b986e50`). All work from branch `balance-transfer-service` (tickets 01–09, including history + cancel + submission docs and the `markCancelled` reversal-row regression fix) has fully landed on `main`; start new work on a fresh branch/PR off `main`.
+**Git:** **PR #1** (https://github.com/hsuanchenlin/balance-transfer-service/pull/1) was **merged into `main`** on 2026-07-13 (merge commit `b986e50`). All work from branch `balance-transfer-service` (tickets 01–09, including history + cancel + submission docs and the `markCancelled` reversal-row regression fix) has fully landed on `main`. New work starts on a fresh branch/PR off `main`.
 
 ## How to run
 
