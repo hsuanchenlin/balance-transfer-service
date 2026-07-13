@@ -4,7 +4,7 @@ _Last updated: 2026-07-13. Resume point for a fresh Claude Code CLI session._
 
 A RESTful balance-transfer service (Spring Boot 3 / Java 21, MySQL + Redis + RocketMQ), built from a homework skeleton with a spec → ADRs → tickets → TDD workflow.
 
-## Status: tickets 01–06 done, 07–09 remaining
+## Status: all tickets 01–09 done ✅ (assignment feature-complete)
 
 | # | Ticket | Status |
 |---|--------|--------|
@@ -14,12 +14,14 @@ A RESTful balance-transfer service (Spring Boot 3 / Java 21, MySQL + Redis + Roc
 | 04 | Idempotency key | ✅ done |
 | 05 | Redis balance cache | ✅ done |
 | 06 | RocketMQ events | ✅ done |
-| 07 | Transfer history (`GET /transfers`) | ⬜ ready-for-agent |
-| 08 | Cancel (compensating reversal) | ⬜ ready-for-agent |
-| 09 | Submission docs (README/HELP/curl) | ⬜ ready-for-agent |
+| 07 | Transfer history (`GET /transfers`) | ✅ done |
+| 08 | Cancel (compensating reversal) | ✅ done |
+| 09 | Submission docs (README/HELP/curl) | ✅ done |
 
-**Tests:** 21 pass + 1 documented skip via `mvn verify`.
-**Git:** branch `balance-transfer-service`, 8 commits ahead of `main`, open as **PR #1** → https://github.com/hsuanchenlin/balance-transfer-service/pull/1
+All five assignment endpoints are implemented; README/HELP/curl submission docs are written.
+
+**Tests:** 32 pass + 1 documented skip via `mvn verify` (surefire 4 unit + failsafe 28 IT).
+**Git:** branch `balance-transfer-service`, open as **PR #1** → https://github.com/hsuanchenlin/balance-transfer-service/pull/1. Tickets 07–09 not yet committed as of this update.
 
 ## How to run
 
@@ -34,7 +36,7 @@ MySQL: db `taskdb`, user `taskuser` / `taskpass` (root/`root`). Schema is in `in
 
 ## Architecture
 
-Endpoints (implemented): `POST /users`, `GET /users/{id}/balance`, `POST /transfers`.
+Endpoints (all implemented): `POST /users`, `GET /users/{id}/balance`, `POST /transfers`, `GET /transfers?userId=&page=&size=`, `POST /transfers/{id}/cancel`.
 Package layout under `src/main/java/com/example/demo/`:
 
 - `controller/` — REST + DTO validation (`UserController`, `TransferController`)
@@ -65,17 +67,19 @@ Design canon (READ THESE before changing behavior):
 1. **Testcontainers does NOT work here** — this box's Docker Engine 29.x is incompatible with the docker-java client bundled in the current Testcontainers (API handshake → HTTP 400). Integration tests therefore run against the **compose MySQL** (`AbstractIntegrationTest`), which cleans tables + `balance:*` Redis keys before each test. `docker compose up -d` must be running. To revisit Testcontainers later, swap the base class (documented in its Javadoc).
 2. **RocketMQ from the host** — the compose broker advertises a container-internal address unreachable from host clients. `broker.conf` now sets `brokerIP1=127.0.0.1` so a **restarted** stack is host-reachable. Tests keep RocketMQ **off** via `rocketmq.enabled=false` (see `AbstractIntegrationTest` and `DemoApplicationTests`); the end-to-end `RocketMqSmokeIT` is `@Disabled` with manual-run instructions. The real app defaults `rocketmq.enabled=true`.
 
-## How to continue (the workflow)
+## What was delivered for 07–09
 
-Work the frontier one ticket at a time, clearing context between tickets:
+- **07 — Transfer history:** `GET /transfers?userId=&page=&size=` — offset paging, sender-or-receiver, `ORDER BY created_at DESC, id DESC`, `PageResponse` wrapper with `totalElements`. Bounds validated (`page≥0`, `1≤size≤100`) → `400`. `TransferHistoryIT`.
+- **08 — Cancel (compensating reversal):** `POST /transfers/{id}/cancel` — guarded 10-min status flip, atomic receiver-debit/sender-credit in ascending-userId order, `409` if receiver can't cover, idempotent double-cancel (classified via a `FOR UPDATE` re-read), `404` unknown, appends a linked `reversal_of` row, emits `TransferCancelledEvent`. Follows ADR-0002. `TransferCancelIT`.
+- **09 — Submission docs:** `README.md` (design-rationale narrative + API + run), `HELP.md` (setup/data scripts + gotchas), `scripts/curl-samples.sh` (runnable end-to-end walkthrough of all 5 endpoints incl. error cases). Verified live against a running app.
+- **Bug caught during E2E verify:** history JSON showed `reversalOf: 0` instead of `null` — `rs.wasNull()` was read after a later column. Fixed in `TransferRepository.mapItem`; `TransferCancelIT` now asserts the field through the REST/Jackson path.
 
-1. Read the ticket: `.scratch/balance-transfer-service/issues/07-transfer-history.md` (next up).
-2. Use the mattpocock skills: `/implement` (drives it), `/tdd` for the red→green loop. Name tests `*IT` for integration (real MySQL, runs in `mvn verify`) or `*Test` for unit (surefire).
-3. Write a failing test → minimal code → `./mvnw verify` green.
-4. Flip the ticket's `Status:` to `done`, check its boxes.
-5. Commit (`Ticket 0N: <title>` + `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`) and `git push` (extends PR #1).
+## To continue (workflow for future changes)
 
-### Remaining tickets
-- **07 — Transfer history:** `GET /transfers?userId=&page=&size=`, offset paging, sender-or-receiver, `ORDER BY created_at DESC, id DESC`. Reads the `transfer` table.
-- **08 — Cancel (compensating reversal):** `POST /transfers/{id}/cancel` — guarded status flip `... WHERE id=:id AND status='COMPLETED' AND created_at > NOW() - INTERVAL 10 MINUTE`, atomic reversal on the receiver, `409` if receiver can't cover, idempotent double-cancel, emits `TransferCancelled`. Follows ADR-0002. Blocked by 03+06 (both done).
-- **09 — Submission docs:** README narrating the design rationale (the ADR story), `HELP.md` setup/data scripts, curl/Postman samples. Blocked by all others.
+1. Test-first: name tests `*IT` for integration (real MySQL, runs in `mvn verify`) or `*Test` for unit (surefire).
+2. `docker compose up -d`, then failing test → minimal code → `./mvnw verify` green.
+3. Commit (`Ticket 0N: <title>` — do **not** add an agent co-author per repo convention) and `git push` (extends PR #1).
+
+### Not yet done
+- **Commit + push tickets 07–09** (working tree has uncommitted changes as of this update).
+- Optional: a Postman collection (curl script covers the same ground); resolving the Testcontainers / RocketMQ-smoke gotchas above.
