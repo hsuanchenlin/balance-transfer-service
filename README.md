@@ -33,7 +33,7 @@ This is a database invariant, not a lock with a timeout - it holds no matter how
 
 ### 3. Redis is a read-path cache only
 
-Balance reads are cache-aside (`balance:<userId>`, 5-min TTL). The cache is **invalidated after the DB commit** (`afterCommit` hook), never before - so a concurrent reader can't repopulate it with a balance the transaction might roll back. The TTL means any missed invalidation self-heals. Redis is never consulted to decide whether a transfer may proceed.
+Balance reads are cache-aside (`balance:<userId>`, 5-min TTL). The cache is **invalidated after the DB commit** (`afterCommit` hook), never before - so a concurrent reader can't repopulate it with a balance the transaction might roll back. The TTL means any missed invalidation self-heals. Redis is never consulted to decide whether a transfer may proceed. The cache is also **fail-open**: a Redis outage degrades to reading MySQL directly (and never fails an already-committed transfer) - performance may drop, correctness cannot.
 
 ### 4. RocketMQ carries async side-effects, best-effort
 

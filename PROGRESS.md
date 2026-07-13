@@ -20,8 +20,8 @@ A RESTful balance-transfer service (Spring Boot 3 / Java 21, MySQL + Redis + Roc
 
 All five assignment endpoints are implemented; README/HELP/curl submission docs are written.
 
-**Tests:** 32 pass + 1 documented skip via `mvn verify` (surefire 4 unit + failsafe 28 IT).
-**Git:** **PR #1** (https://github.com/hsuanchenlin/balance-transfer-service/pull/1) was **merged into `main`** on 2026-07-13 (merge commit `b986e50`). All work from branch `balance-transfer-service` (tickets 01–09, including history + cancel + submission docs and the `markCancelled` reversal-row regression fix) has fully landed on `main`.
+**Tests:** 40 pass + 1 documented skip via `mvn verify` (surefire 8 unit + failsafe 32 IT).
+**Git:** **PR #1** (https://github.com/hsuanchenlin/balance-transfer-service/pull/1) was **merged into `main`** on 2026-07-13 (merge commit `b986e50`). All work from branch `balance-transfer-service` (tickets 01–09, including history + cancel + submission docs and the `markCancelled` reversal-row regression fix) has fully landed on `main`; start new work on a fresh branch/PR off `main`.
 
 ## How to run
 
@@ -73,6 +73,15 @@ Design canon (READ THESE before changing behavior):
 - **08 — Cancel (compensating reversal):** `POST /transfers/{id}/cancel` — guarded 10-min status flip, atomic receiver-debit/sender-credit in ascending-userId order, `409` if receiver can't cover, idempotent double-cancel (classified via a `FOR UPDATE` re-read), `404` unknown, appends a linked `reversal_of` row, emits `TransferCancelledEvent`. Follows ADR-0002. `TransferCancelIT`.
 - **09 — Submission docs:** `README.md` (design-rationale narrative + API + run), `HELP.md` (setup/data scripts + gotchas), `scripts/curl-samples.sh` (runnable end-to-end walkthrough of all 5 endpoints incl. error cases). Verified live against a running app.
 - **Bug caught during E2E verify:** history JSON showed `reversalOf: 0` instead of `null` — `rs.wasNull()` was read after a later column. Fixed in `TransferRepository.mapItem`; `TransferCancelIT` now asserts the field through the REST/Jackson path.
+
+## Post-submission hardening (senior review pass)
+
+A staff-level review of the whole codebase lives in `.scratch/balance-transfer-service/senior-review.md` (prioritized findings + status). Delivered so far:
+
+- **Fail-open cache:** `BalanceCache` now catches `DataAccessException` on get/put/evict - a Redis outage degrades to DB reads and can no longer 500 a committed transfer via the afterCommit eviction (`BalanceCacheTest`).
+- **Consistent error model:** malformed JSON, unknown routes, unsupported methods, and unexpected 500s now all return the `ApiError` shape via new `GlobalExceptionHandler` handlers (`ErrorModelIT`).
+- **Defensive credit:** `TransferService` throws if a credit touches 0 rows instead of silently dropping money (unreachable today, invariant for future refactors).
+- **Interview prep:** `docs/interview-qa.md` - code walkthrough + answers to the 15 design questions an interviewer would ask.
 
 ## To continue (workflow for future changes)
 

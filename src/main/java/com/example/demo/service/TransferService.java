@@ -177,9 +177,9 @@ public class TransferService {
     private void moveInLockOrder(String from, String to, BigDecimal amount) {
         if (from.compareTo(to) < 0) {
             debitOrThrow(from, amount);
-            accounts.credit(to, amount);
+            creditOrThrow(to, amount);
         } else {
-            accounts.credit(to, amount);
+            creditOrThrow(to, amount);
             debitOrThrow(from, amount);
         }
     }
@@ -188,6 +188,19 @@ public class TransferService {
         int rows = accounts.debit(user, amount);
         if (rows == 0) {
             throw new InsufficientFundsException(user);
+        }
+    }
+
+    /**
+     * A credit that touches 0 rows means the account vanished mid-transaction.
+     * Unreachable today (existence is checked upfront and accounts are never
+     * deleted), but the money path must fail loudly - never drop a credit -
+     * so the invariant survives future refactors.
+     */
+    private void creditOrThrow(String user, BigDecimal amount) {
+        int rows = accounts.credit(user, amount);
+        if (rows == 0) {
+            throw new IllegalStateException("Credit applied to missing account: " + user);
         }
     }
 
