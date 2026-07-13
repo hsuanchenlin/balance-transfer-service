@@ -26,7 +26,8 @@ The two account rows a transfer touches (debit + credit) are always locked in **
 
 The multi-instance hazard that *does* remain is a retried/duplicated request. A client may send an optional `requestId`, stored under a `UNIQUE` constraint:
 
-- **Sequential retry** replays the original transfer's result (same `transferId`), applying the money move once.
+- **Sequential retry** with the same payload replays the original transfer's result (same `transferId`), applying the money move once.
+- **Reused key, different payload** (other parties or amount) is rejected with `422` - a mismatched "retry" is a client bug, and replaying the original result would silently answer a question the client did not ask (same contract as Stripe's idempotency keys).
 - **Concurrent duplicate** loses the unique-key race and is rolled back (`409`), so the transfer applies **at most once**.
 
 This is a database invariant, not a lock with a timeout - it holds no matter how many instances race. See `TransferIdempotencyIT`.
@@ -64,7 +65,7 @@ Base URL `http://localhost:8080`. Errors share one JSON shape: `{timestamp, stat
 |--------|------|---------|---------|----------------|
 | `POST` | `/users` | Create a user with an initial balance | `201` | `409` duplicate userId, `400` validation |
 | `GET` | `/users/{userId}/balance` | Current balance (Redis-cached) | `200` | `404` unknown user |
-| `POST` | `/transfers` | Atomic transfer; optional `requestId` for idempotency | `201` | `409` insufficient funds / duplicate requestId, `404` unknown user, `400` self-transfer or bad amount |
+| `POST` | `/transfers` | Atomic transfer; optional `requestId` for idempotency | `201` | `409` insufficient funds / duplicate requestId, `422` requestId reused with different payload, `404` unknown user, `400` self-transfer or bad amount |
 | `GET` | `/transfers?userId=&page=&size=` | Paged history (sender or receiver), newest first | `200` | `400` bad paging / missing userId |
 | `POST` | `/transfers/{transferId}/cancel` | Compensating reversal within 10 min | `200` | `409` too old / receiver can't cover, `404` unknown transfer |
 

@@ -45,6 +45,9 @@ are robustness/consistency/performance refinements, prioritized.
    practice (e.g. Stripe) rejects the mismatch (409/422). Decide: implement the
    comparison on replay, or document the current contract in README. Either is
    defensible for the homework; silence is not.
+   -> Status: FIXED in iteration 2 - replay now compares from/to/amount
+   (compareTo, scale-insensitive) and rejects mismatches with 422
+   (`IdempotencyConflictException`); three new tests in `TransferIdempotencyIT`.
 
 5. **RocketMQ consumer group is hardcoded** (`"balance-transfer-consumer"` in
    `RocketMqConfig`) while the producer group comes from yaml. Move to

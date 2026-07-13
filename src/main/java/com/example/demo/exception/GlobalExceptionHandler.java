@@ -41,6 +41,12 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.CONFLICT, ex.getMessage(), req);
     }
 
+    @ExceptionHandler(IdempotencyConflictException.class)
+    public ResponseEntity<ApiError> handleIdempotencyConflict(IdempotencyConflictException ex,
+                                                              HttpServletRequest req) {
+        return build(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage(), req);
+    }
+
     @ExceptionHandler(CancellationNotAllowedException.class)
     public ResponseEntity<ApiError> handleCancellationNotAllowed(CancellationNotAllowedException ex,
                                                                  HttpServletRequest req) {

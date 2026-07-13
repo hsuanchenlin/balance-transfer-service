@@ -106,10 +106,16 @@ the latest committed status rather than the transaction's snapshot.
 ### Q6. How does idempotency work, exactly?
 
 The client may send a `requestId`; it is stored on the transfer row under a
-UNIQUE constraint. Two cases:
+UNIQUE constraint. Three cases:
 
 - **Sequential retry** (common): the service finds the existing row by
-  `requestId` and returns the original result without moving money.
+  `requestId`, verifies the retry carries the same payload (parties and
+  amount, compared with `compareTo` so `100` and `100.00` match), and returns
+  the original result without moving money.
+- **Reused key, different payload**: rejected with 422
+  (`IdempotencyConflictException`). A mismatched "retry" is a client bug;
+  replaying the original result would silently answer a question the client
+  did not ask. Same contract as Stripe's idempotency keys.
 - **Concurrent duplicate** (race): both requests pass the lookup, both debit,
   but only one INSERT of the transfer row can succeed; the loser gets
   `DuplicateKeyException`, which rolls back its balance changes, and returns
@@ -201,9 +207,6 @@ the documented future work).
 - **Keyset pagination + UNION-based history query**: `from_user_id = :u OR
   to_user_id = :u` defeats single-column indexes at scale, and offset paging
   drifts under concurrent inserts.
-- **Idempotency payload validation**: replaying a `requestId` with a different
-  amount currently returns the original result; production APIs reject the
-  mismatch (409/422).
 - **AuthN/Z, rate limiting, observability** - out of scope for the brief.
 
 ### Q14. Why integration tests against real MySQL instead of H2/mocks?
@@ -226,7 +229,8 @@ One JSON shape for every failure: `{timestamp, status, error, message, path}`
 to meaningful codes: 400 validation/self-transfer/malformed body, 404 unknown
 user/transfer/route, 409 for every conflict with current state (insufficient
 funds, duplicate user, duplicate `requestId` race, cancel out-of-window,
-receiver cannot cover the reversal). A catch-all keeps even unexpected 500s and
+receiver cannot cover the reversal), and 422 when a `requestId` is reused with
+a different payload. A catch-all keeps even unexpected 500s and
 framework-generated statuses (405, 406, 415) in the same shape (`ErrorModelIT`).
 409 vs 400 is deliberate: the request is well-formed but conflicts with state,
 so a retry after the state changes may succeed.

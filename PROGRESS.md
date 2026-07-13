@@ -20,7 +20,7 @@ A RESTful balance-transfer service (Spring Boot 3 / Java 21, MySQL + Redis + Roc
 
 All five assignment endpoints are implemented; README/HELP/curl submission docs are written.
 
-**Tests:** 40 pass + 1 documented skip via `mvn verify` (surefire 8 unit + failsafe 32 IT).
+**Tests:** 42 pass + 1 documented skip via `mvn verify` (surefire 8 unit + failsafe 35 IT).
 **Git:** **PR #1** (https://github.com/hsuanchenlin/balance-transfer-service/pull/1) was **merged into `main`** on 2026-07-13 (merge commit `b986e50`). All work from branch `balance-transfer-service` (tickets 01–09, including history + cancel + submission docs and the `markCancelled` reversal-row regression fix) has fully landed on `main`; start new work on a fresh branch/PR off `main`.
 
 ## How to run
@@ -58,7 +58,7 @@ Design canon (READ THESE before changing behavior):
 ### Load-bearing decisions already implemented
 - **Money:** `BigDecimal` ↔ `DECIMAL(19,4)`.
 - **Transfer safety (ADR-0001):** one `@Transactional` doing an atomic conditional debit `UPDATE account SET balance = balance - :amt WHERE user_id = :from AND balance >= :amt` (0 rows → `409`), with the two account rows touched in **ascending-userId order** to avoid deadlocks. Proven by `TransferConcurrencyIT`.
-- **Idempotency:** optional `requestId` under a `UNIQUE` constraint; sequential retry replays the original, concurrent duplicate rolls back → applies at most once.
+- **Idempotency:** optional `requestId` under a `UNIQUE` constraint; sequential retry with the same payload replays the original, a reused key with a different payload is rejected with `422`, concurrent duplicate rolls back → applies at most once.
 - **Redis:** read-path cache only; invalidated in an `afterCommit` hook.
 - **RocketMQ:** transfer publishes `TransferCompletedEvent` afterCommit (best-effort); consumer writes an idempotent `audit_log` row + invalidates cache.
 
@@ -81,6 +81,7 @@ A staff-level review of the whole codebase lives in `.scratch/balance-transfer-s
 - **Fail-open cache:** `BalanceCache` now catches `DataAccessException` on get/put/evict - a Redis outage degrades to DB reads and can no longer 500 a committed transfer via the afterCommit eviction (`BalanceCacheTest`).
 - **Consistent error model:** malformed JSON, unknown routes, unsupported methods, and unexpected 500s now all return the `ApiError` shape via new `GlobalExceptionHandler` handlers (`ErrorModelIT`).
 - **Defensive credit:** `TransferService` throws if a credit touches 0 rows instead of silently dropping money (unreachable today, invariant for future refactors).
+- **Idempotency payload validation:** replaying a `requestId` with different parties or amount is rejected with `422` (`IdempotencyConflictException`) instead of silently returning the original result - Stripe's idempotency-key contract (`TransferIdempotencyIT`).
 - **Interview prep:** `docs/interview-qa.md` - code walkthrough + answers to the 15 design questions an interviewer would ask.
 
 ## To continue (workflow for future changes)
