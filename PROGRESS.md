@@ -86,6 +86,7 @@ A staff-level review of the whole codebase lives in `.scratch/balance-transfer-s
 - **Documented limits:** new README section "Known limits and scale evolutions" (history OR-query vs UNION ALL + keyset, offset-paging drift, cache-aside stale-read window, best-effort publish vs outbox), closing the last review-backlog items.
 - **Interview prep:** `docs/interview-qa.md` - code walkthrough + answers to the 15 design questions an interviewer would ask.
 - **Full comprehension guide:** `docs/code-walkthrough.md` - exhaustive file-by-file walkthrough (every class, schema column by column, config keys, and what each test class proves), for understanding every single piece of the code.
+- **Postman collection:** `scripts/balance-transfer.postman_collection.json` - the curl walkthrough as a runnable collection with per-request assertions (21 requests, 30 assertions); verified green with `npx newman run` against the live app.
 
 ## To continue (workflow for future changes)
 
@@ -95,6 +96,5 @@ A staff-level review of the whole codebase lives in `.scratch/balance-transfer-s
 
 ### Optional follow-ups (no pending assignment work)
 The assignment is complete and merged; nothing is required. If someone wants to polish further:
-- A Postman collection (the curl script already covers the same ground).
 - Resolving the Testcontainers gotcha (env gotcha 1 above) so ITs no longer need the compose MySQL.
 - Un-disabling the RocketMQ smoke test once the broker is host-reachable (env gotcha 2 above).

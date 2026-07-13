@@ -71,6 +71,14 @@ Connection settings are in `src/main/resources/application.yaml` and already poi
 
 The script creates users, transfers, reads balances and history, cancels a transfer, and shows the `404`/`409`/`400` error responses. It needs the app running on `:8080`.
 
+Prefer Postman? The same walkthrough with per-request status/body assertions is in `scripts/balance-transfer.postman_collection.json` - import it into Postman and run the collection in order (the first request generates fresh user ids, so re-runs never collide), or run it headless:
+
+```bash
+npx newman run scripts/balance-transfer.postman_collection.json
+```
+
+Expected: 21 requests, 30 assertions, 0 failed.
+
 ## 5. Run the tests
 
 ```bash

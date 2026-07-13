@@ -94,7 +94,7 @@ Base URL `http://localhost:8080`. Errors share one JSON shape: `{timestamp, stat
 
 Paging defaults: `page=0`, `size=20`; bounds `page ≥ 0`, `1 ≤ size ≤ 100` (out-of-range → `400`).
 
-Runnable `curl` samples for every endpoint, including the error cases, are in [`scripts/curl-samples.sh`](scripts/curl-samples.sh).
+Runnable `curl` samples for every endpoint, including the error cases, are in [`scripts/curl-samples.sh`](scripts/curl-samples.sh). The same walkthrough is available as a Postman collection with per-request assertions: [`scripts/balance-transfer.postman_collection.json`](scripts/balance-transfer.postman_collection.json) (import it, or `npx newman run scripts/balance-transfer.postman_collection.json`).
 
 ---
 
