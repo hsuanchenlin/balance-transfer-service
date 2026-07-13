@@ -88,10 +88,16 @@ docker compose up -d          # the integration tests use the real compose MySQL
 
 Expected: **all tests pass, 1 skipped** (`RocketMqSmokeIT`, see below).
 
+To also run the end-to-end RocketMQ smoke test (transfer → broker → consumer → `audit_log` row, ~30-60s):
+
+```bash
+ROCKETMQ_SMOKE=true ./mvnw -Dit.test=RocketMqSmokeIT verify
+```
+
 ### Environment gotchas (read if a test fails)
 
 1. **Integration tests require the compose stack running.** They boot the full app against `localhost:3306` / `6379` and clean the tables + `balance:*` keys before each test. (Testcontainers was the intended provider but this box's Docker Engine 29.x is incompatible with the bundled docker-java client; `AbstractIntegrationTest` documents the one-line swap back once that's resolved.)
-2. **RocketMQ is off during tests** (`rocketmq.enabled=false`) - the compose broker advertises a container-internal address not reachable from host test clients. The end-to-end `RocketMqSmokeIT` is therefore `@Disabled` with manual-run instructions in its Javadoc; `broker.conf` sets `brokerIP1=127.0.0.1` so a **restarted** stack is host-reachable for that manual run. The running app defaults RocketMQ on.
+2. **RocketMQ is off during tests** (`rocketmq.enabled=false`) - the end-to-end `RocketMqSmokeIT` is opt-in (`ROCKETMQ_SMOKE=true`, command above) because first-run topic-route propagation makes it slow, not because it is broken: `broker.conf` sets `brokerIP1=127.0.0.1` so the compose broker is host-reachable, and `timerWheelEnable=false` so it boots fast under emulated Docker. If you edit `broker.conf`, recreate the container (`docker compose up -d --force-recreate rocketmq-broker`) - a plain restart keeps serving the pre-edit file because Docker for Mac binds single-file mounts by inode. The running app defaults RocketMQ on.
 
 ## 6. Shut down
 

@@ -330,6 +330,30 @@ runs `*IT` classes during `./mvnw verify` (surefire handles `*Test` units).
   `name-server`, `producer.group`, `consumer.group`, `topic.transfer`.
   `enabled` defaults to `true` here for live runs; tests force it to `false`.
 
+## Dev stack ([`docker-compose.yaml`](../docker-compose.yaml) + [`broker.conf`](../broker.conf))
+
+- **mysql** (8.0, port 3306) - seeds the schema by mounting `init.sql` into
+  `/docker-entrypoint-initdb.d/` (runs only on a fresh volume); healthcheck via
+  `mysqladmin ping`; data persisted in the `mysql_data` volume.
+- **redis** (7, port 6379) - no auth, dev only; `redis_data` volume.
+- **rocketmq-namesrv** (5.1.4, port 9876) - routing registry. Its healthcheck
+  is a plain TCP probe (`bash -c 'echo > /dev/tcp/...'`) because namesrv speaks
+  the binary remoting protocol, not HTTP - an HTTP `curl` check reports
+  `unhealthy` forever.
+- **rocketmq-broker** (5.1.4, ports 10911/10909) - loads `broker.conf`, whose
+  two load-bearing lines are `brokerIP1 = 127.0.0.1` (advertise a
+  host-reachable address so the app and tests on the host can publish/consume;
+  the address the broker registers with namesrv is what clients dial) and
+  `timerWheelEnable = false` (the 5.x delayed-message timer store is unused
+  here and its boot-time scan hangs for tens of minutes under emulated Docker).
+  `broker.conf` is a single-file bind mount: after editing it, recreate the
+  container (`docker compose up -d --force-recreate rocketmq-broker`); a plain
+  restart keeps the pre-edit content because Docker for Mac binds by inode.
+- **rocketmq-console** (port 8088 → container 8080) - web UI for topics and
+  messages. Note: with `brokerIP1 = 127.0.0.1` the console (inside the docker
+  network) cannot dial the broker for message queries - the trade-off favors
+  host clients, which is what this project needs.
+
 ## Test suite - what each class proves
 
 All integration tests extend
@@ -358,7 +382,7 @@ documented skip.
 | [`TransferEventHandlerTest`](../src/test/java/com/example/demo/event/TransferEventHandlerTest.java) | unit | Handler records audit (cancelled events keyed on the original id) and evicts both balances. |
 | [`RocketMqTransferEventPublisherTest`](../src/test/java/com/example/demo/event/RocketMqTransferEventPublisherTest.java) | unit | The publisher serializes the event and targets the configured topic. |
 | [`DemoApplicationTests`](../src/test/java/com/example/demo/DemoApplicationTests.java) | unit | The Spring context wires up (smoke). |
-| [`RocketMqSmokeIT`](../src/test/java/com/example/demo/RocketMqSmokeIT.java) | IT, `@Disabled` | The true end-to-end broker path. Skipped because the compose broker advertises a container-internal address; the class javadoc has the manual-run recipe, and the logic is covered by the handler unit test + `AuditIdempotencyIT`. |
+| [`RocketMqSmokeIT`](../src/test/java/com/example/demo/RocketMqSmokeIT.java) | IT, opt-in | The true end-to-end broker path: a live transfer publishes through the compose broker and the push consumer writes the `audit_log` row. Opt-in via `ROCKETMQ_SMOKE=true` (slow: first-run topic-route propagation); skipped in the default suite, where the logic is covered by the handler unit test + `AuditIdempotencyIT`. |
 
 ## The five invariants to hold in your head
 

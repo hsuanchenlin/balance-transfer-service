@@ -76,6 +76,26 @@ are robustness/consistency/performance refinements, prioritized.
    plus a real transfer (the pre-existing host-to-broker publish timeout was
    reproduced identically on the old pin, ruling out a regression).
 
+8. **Broken dev-stack plumbing (compose + broker.conf), found in iteration 7.**
+   Three related defects in the never-reviewed infra files:
+   (a) the namesrv healthcheck probed HTTP against the binary remoting port, so
+   the container reported `unhealthy` forever (and any
+   `depends_on: condition: service_healthy` would never fire);
+   (b) `brokerIP1 = 127.0.0.1` had silently never taken effect - the compose
+   single-file bind mount serves the file by inode on Docker for Mac, and the
+   broker container predated the edit, so the broker still advertised its
+   container-internal IP (the root cause of every "broker not host-reachable"
+   symptom in prior iterations);
+   (c) the unused RocketMQ 5.x timer-wheel store made emulated (qemu x86 on
+   Apple Silicon) broker boots spin at 200% CPU for 20+ minutes.
+   -> Status: FIXED in iteration 7 - TCP healthcheck (container now `healthy`),
+   broker recreated so `brokerIP1` is live (boot log: `broker[broker-a,
+   127.0.0.1:10911] boot success`), `timerWheelEnable = false` (boot in ~30s),
+   and the obsolete compose `version:` key removed. Proven by turning
+   `RocketMqSmokeIT` from a `@Disabled` placeholder into a real opt-in E2E test
+   (`ROCKETMQ_SMOKE=true`): transfer -> broker -> push consumer -> `audit_log`
+   row, green in 33s; default suite unchanged at 42 pass + 1 skip.
+
 ## P3 - accepted tradeoffs (document, don't change)
 
 -> Status: DOCUMENTED in iteration 3 - the first three now live in the README

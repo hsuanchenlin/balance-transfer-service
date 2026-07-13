@@ -65,7 +65,7 @@ Design canon (READ THESE before changing behavior):
 ## ⚠️ Environment gotchas (important)
 
 1. **Testcontainers does NOT work here** — this box's Docker Engine 29.x is incompatible with the docker-java client bundled in the current Testcontainers (API handshake → HTTP 400). Integration tests therefore run against the **compose MySQL** (`AbstractIntegrationTest`), which cleans tables + `balance:*` Redis keys before each test. `docker compose up -d` must be running. To revisit Testcontainers later, swap the base class (documented in its Javadoc).
-2. **RocketMQ from the host** — the compose broker advertises a container-internal address unreachable from host clients. `broker.conf` now sets `brokerIP1=127.0.0.1` so a **restarted** stack is host-reachable. Tests keep RocketMQ **off** via `rocketmq.enabled=false` (see `AbstractIntegrationTest` and `DemoApplicationTests`); the end-to-end `RocketMqSmokeIT` is `@Disabled` with manual-run instructions. The real app defaults `rocketmq.enabled=true`.
+2. **RocketMQ from the host** - RESOLVED. `broker.conf` sets `brokerIP1=127.0.0.1` (host-reachable) and `timerWheelEnable=false` (the unused 5.x timer-wheel store makes boot pathologically slow under qemu emulation on Apple Silicon). Gotcha within the gotcha: compose bind-mounts `broker.conf` as a single file and Docker for Mac tracks the *inode*, so after editing it you must `docker compose up -d --force-recreate rocketmq-broker` - a plain restart serves the stale pre-edit content (exactly why the original `brokerIP1` fix silently never took effect). Tests keep RocketMQ **off** via `rocketmq.enabled=false` (see `AbstractIntegrationTest` and `DemoApplicationTests`); the end-to-end `RocketMqSmokeIT` is now a real test, opt-in via `ROCKETMQ_SMOKE=true ./mvnw -Dit.test=RocketMqSmokeIT verify` (verified green: transfer → broker → push consumer → `audit_log` row, ~33s). The real app defaults `rocketmq.enabled=true`.
 
 ## What was delivered for 07–09
 
@@ -88,6 +88,7 @@ A staff-level review of the whole codebase lives in `.scratch/balance-transfer-s
 - **Full comprehension guide:** `docs/code-walkthrough.md` - exhaustive file-by-file walkthrough (every class, schema column by column, config keys, and what each test class proves), for understanding every single piece of the code.
 - **Postman collection:** `scripts/balance-transfer.postman_collection.json` - the curl walkthrough as a runnable collection with per-request assertions (21 requests, 30 assertions); verified green with `npx newman run` against the live app.
 - **Dependency hygiene:** removed the baseline skeleton's `dependencyManagement` block that force-downgraded RocketMQ's transitive gRPC to 1.33.0 (2020, CVE-carrying Netty bundle); gRPC now resolves to 1.53.0, the version `rocketmq-client` 5.3.2 itself manages. Verified via `dependency:tree`, full suite, and a live boot + transfer with RocketMQ enabled.
+- **RocketMQ pipeline verified end-to-end:** `RocketMqSmokeIT` is now a real opt-in test (`ROCKETMQ_SMOKE=true`) proving transfer → broker → push consumer → `audit_log` row against the compose stack, green in ~33s. Unblocked by fixing the broker environment (see gotcha 2): the stale single-file bind mount meant `brokerIP1` had never taken effect, and the unused timer-wheel store made emulated boots hang, now `timerWheelEnable=false`. Also fixed the namesrv compose healthcheck (it probed HTTP against the binary remoting port and reported `unhealthy` forever; now a TCP probe, container reports `healthy`).
 
 ## To continue (workflow for future changes)
 
@@ -97,5 +98,4 @@ A staff-level review of the whole codebase lives in `.scratch/balance-transfer-s
 
 ### Optional follow-ups (no pending assignment work)
 The assignment is complete and merged; nothing is required. If someone wants to polish further:
-- Resolving the Testcontainers gotcha (env gotcha 1 above) so ITs no longer need the compose MySQL.
-- Un-disabling the RocketMQ smoke test once the broker is host-reachable (env gotcha 2 above).
+- Resolving the Testcontainers gotcha (env gotcha 1 above) so ITs no longer need the compose MySQL (the RocketMQ-smoke gotcha is resolved - the smoke test now runs for real, opt-in via `ROCKETMQ_SMOKE=true`).
