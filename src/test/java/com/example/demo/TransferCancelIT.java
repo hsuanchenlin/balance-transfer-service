@@ -45,6 +45,11 @@ class TransferCancelIT extends AbstractIntegrationTest {
                 .param("id", transferId).query(Long.class).single();
     }
 
+    private long reversalIdOf(long transferId) {
+        return jdbc.sql("SELECT id FROM transfer WHERE reversal_of = :id")
+                .param("id", transferId).query(Long.class).single();
+    }
+
     @SuppressWarnings({"rawtypes", "unchecked"})
     private List<Map<String, Object>> historyRows(String userId) {
         var body = rest.getForEntity("/transfers?userId=" + userId + "&size=100", Map.class).getBody();
@@ -127,6 +132,25 @@ class TransferCancelIT extends AbstractIntegrationTest {
         assertThat(cancel(t).getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
         assertThat(statusOf(t)).isEqualTo("COMPLETED");
         assertThat(reversalCount(t)).isZero();
+    }
+
+    @Test
+    void cancel_returns409_whenTargetIsItselfAReversal() {
+        createUser("alice", 1000);
+        createUser("bob", 0);
+        long t = transfer("alice", "bob", 200);
+        assertThat(cancel(t).getStatusCode()).isEqualTo(HttpStatus.OK); // original cancelled, reversal appended
+
+        long reversalId = reversalIdOf(t);
+        var resp = cancel(reversalId);
+
+        // A compensating reversal row is not itself cancellable: the flip matches
+        // 0 rows (reversal_of IS NULL fails), then classification sees COMPLETED → 409.
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(statusOf(reversalId)).isEqualTo("COMPLETED"); // reversal untouched
+        assertThat(reversalCount(reversalId)).isZero();          // no further reversal appended
+        assertThat(balanceOf("alice")).isEqualByComparingTo("1000"); // balances unchanged
+        assertThat(balanceOf("bob")).isEqualByComparingTo("0");
     }
 
     @Test

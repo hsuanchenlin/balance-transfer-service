@@ -110,13 +110,16 @@ public class TransferRepository {
 
     /**
      * Guarded status flip encoding ADR-0002: a transfer can be cancelled only
-     * while it is still COMPLETED and within the 10-minute window. Returns rows
-     * affected — 0 means already cancelled, too old, or gone, which makes a
-     * double-cancel naturally idempotent.
+     * while it is still COMPLETED, within the 10-minute window, and is an
+     * original transfer ({@code reversal_of IS NULL}) — a compensating reversal
+     * row is never itself cancellable. Returns rows affected — 0 means already
+     * cancelled, too old, a reversal, or gone, which makes a double-cancel
+     * naturally idempotent.
      */
     public int markCancelled(long id) {
         return jdbc.sql("UPDATE transfer SET status = 'CANCELLED' "
                         + "WHERE id = :id AND status = 'COMPLETED' "
+                        + "AND reversal_of IS NULL "
                         + "AND created_at > NOW() - INTERVAL 10 MINUTE")
                 .param("id", id)
                 .update();
