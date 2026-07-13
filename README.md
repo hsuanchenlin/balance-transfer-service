@@ -116,9 +116,12 @@ Full setup notes, data scripts, and the test story are in [HELP.md](HELP.md).
 ## Test
 
 ```bash
-docker compose up -d      # the integration tests run against this stack
 ./mvnw verify             # unit (surefire) + integration *IT (failsafe)
 ```
+
+The suite is self-contained: integration tests start their own Testcontainers
+MySQL (seeded with the same `init.sql` as compose) and Redis, so only a Docker
+daemon is required - the compose stack is for running the app itself.
 
 ## Architecture
 

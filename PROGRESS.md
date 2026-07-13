@@ -26,8 +26,8 @@ All five assignment endpoints are implemented; README/HELP/curl submission docs 
 ## How to run
 
 ```bash
-docker compose up -d          # MySQL(3306) + Redis(6379) + RocketMQ; REQUIRED for tests
-./mvnw verify                 # runs unit (surefire) + integration *IT (failsafe)
+./mvnw verify                 # unit (surefire) + integration *IT (failsafe); self-contained (Testcontainers), needs only a Docker daemon
+docker compose up -d          # MySQL(3306) + Redis(6379) + RocketMQ; for running the app / smoke test, NOT needed for verify
 ./mvnw spring-boot:run        # run the app (needs the stack up)
 docker compose down           # stop the stack
 ```
@@ -64,7 +64,7 @@ Design canon (READ THESE before changing behavior):
 
 ## ⚠️ Environment gotchas (important)
 
-1. **Testcontainers does NOT work here** — this box's Docker Engine 29.x is incompatible with the docker-java client bundled in the current Testcontainers (API handshake → HTTP 400). Integration tests therefore run against the **compose MySQL** (`AbstractIntegrationTest`), which cleans tables + `balance:*` Redis keys before each test. `docker compose up -d` must be running. To revisit Testcontainers later, swap the base class (documented in its Javadoc).
+1. **Testcontainers vs Docker Engine 29** - RESOLVED. Integration tests now run on Testcontainers-managed MySQL (seeded with the same repo-root `init.sql` as compose) and Redis, started once per JVM by `AbstractIntegrationTest`; `./mvnw verify` needs only a Docker daemon, not the compose stack. Root cause of the old failure: Docker Engine 29+ rejects Docker API versions below 1.44 with HTTP 400 (verified: `/v1.32/info` → 400, `/v1.44/info` → 200 on this engine), and the docker-java bundled with Testcontainers 1.21.x (docker-java 3.4.2, even in 1.21.3, the latest) still handshakes with 1.32. Fix: the base class pins the docker-java system property `api.version=1.44` in a static block (respecting an external override). Drop that pin once the bundled docker-java catches up.
 2. **RocketMQ from the host** - RESOLVED. `broker.conf` sets `brokerIP1=127.0.0.1` (host-reachable) and `timerWheelEnable=false` (the unused 5.x timer-wheel store makes boot pathologically slow under qemu emulation on Apple Silicon). Gotcha within the gotcha: compose bind-mounts `broker.conf` as a single file and Docker for Mac tracks the *inode*, so after editing it you must `docker compose up -d --force-recreate rocketmq-broker` - a plain restart serves the stale pre-edit content (exactly why the original `brokerIP1` fix silently never took effect). Tests keep RocketMQ **off** via `rocketmq.enabled=false` (see `AbstractIntegrationTest` and `DemoApplicationTests`); the end-to-end `RocketMqSmokeIT` is now a real test, opt-in via `ROCKETMQ_SMOKE=true ./mvnw -Dit.test=RocketMqSmokeIT verify` (verified green: transfer → broker → push consumer → `audit_log` row, ~33s). The real app defaults `rocketmq.enabled=true`.
 
 ## What was delivered for 07–09
@@ -88,14 +88,14 @@ A staff-level review of the whole codebase lives in `.scratch/balance-transfer-s
 - **Full comprehension guide:** `docs/code-walkthrough.md` - exhaustive file-by-file walkthrough (every class, schema column by column, config keys, and what each test class proves), for understanding every single piece of the code.
 - **Postman collection:** `scripts/balance-transfer.postman_collection.json` - the curl walkthrough as a runnable collection with per-request assertions (21 requests, 30 assertions); verified green with `npx newman run` against the live app.
 - **Dependency hygiene:** removed the baseline skeleton's `dependencyManagement` block that force-downgraded RocketMQ's transitive gRPC to 1.33.0 (2020, CVE-carrying Netty bundle); gRPC now resolves to 1.53.0, the version `rocketmq-client` 5.3.2 itself manages. Verified via `dependency:tree`, full suite, and a live boot + transfer with RocketMQ enabled.
+- **Self-contained test suite:** `AbstractIntegrationTest` now starts its own Testcontainers MySQL (seeded with `init.sql`) and Redis instead of pointing at the compose stack, so `./mvnw verify` runs anywhere with a Docker daemon (verified green with the compose MySQL/Redis stopped). Unblocked by diagnosing the Docker 29 gotcha: the engine 400s Docker API handshakes below 1.44, fixed by pinning docker-java's `api.version=1.44` (see gotcha 1).
 - **RocketMQ pipeline verified end-to-end:** `RocketMqSmokeIT` is now a real opt-in test (`ROCKETMQ_SMOKE=true`) proving transfer → broker → push consumer → `audit_log` row against the compose stack, green in ~33s. Unblocked by fixing the broker environment (see gotcha 2): the stale single-file bind mount meant `brokerIP1` had never taken effect, and the unused timer-wheel store made emulated boots hang, now `timerWheelEnable=false`. Also fixed the namesrv compose healthcheck (it probed HTTP against the binary remoting port and reported `unhealthy` forever; now a TCP probe, container reports `healthy`).
 
 ## To continue (workflow for future changes)
 
-1. Test-first: name tests `*IT` for integration (real MySQL, runs in `mvn verify`) or `*Test` for unit (surefire).
-2. `docker compose up -d`, then failing test → minimal code → `./mvnw verify` green.
+1. Test-first: name tests `*IT` for integration (real MySQL via Testcontainers, runs in `mvn verify`) or `*Test` for unit (surefire).
+2. Failing test → minimal code → `./mvnw verify` green (needs only a Docker daemon; `docker compose up -d` is for running the app or the RocketMQ smoke test).
 3. Commit (`Ticket 0N: <title>` — do **not** add an agent co-author per repo convention). PR #1 is merged, so start future work on a **new branch off `main`** and open a new PR; do not reuse `balance-transfer-service`.
 
 ### Optional follow-ups (no pending assignment work)
-The assignment is complete and merged; nothing is required. If someone wants to polish further:
-- Resolving the Testcontainers gotcha (env gotcha 1 above) so ITs no longer need the compose MySQL (the RocketMQ-smoke gotcha is resolved - the smoke test now runs for real, opt-in via `ROCKETMQ_SMOKE=true`).
+The assignment is complete and merged; nothing is required. Both former environment gotchas are resolved: the smoke test runs for real, opt-in via `ROCKETMQ_SMOKE=true`, and the integration suite is self-contained on Testcontainers.

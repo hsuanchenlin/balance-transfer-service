@@ -316,6 +316,10 @@ Spring Boot 3.5 parent, Java 21. Direct dependencies and why each exists:
   `rocketmq.enabled`. It transitively brings gRPC 1.53.0 (RocketMQ's own
   managed version); the app declares no gRPC itself.
 - `spring-boot-starter-test` - JUnit 5, AssertJ, MockMvc et al.
+- `org.testcontainers:junit-jupiter` + `org.testcontainers:mysql` (test scope,
+  versions from the Boot BOM) - self-managed MySQL/Redis containers for the
+  integration suite; the Redis side uses the plain `GenericContainer` from
+  testcontainers core, so no extra module is needed.
 
 The only build customization is the `maven-failsafe-plugin` execution that
 runs `*IT` classes during `./mvnw verify` (surefire handles `*Test` units).
@@ -358,11 +362,15 @@ runs `*IT` classes during `./mvnw verify` (surefire handles `*Test` units).
 
 All integration tests extend
 [`AbstractIntegrationTest`](../src/test/java/com/example/demo/support/AbstractIntegrationTest.java),
-which boots the full app on a random port against the real compose MySQL and
-Redis (Testcontainers is incompatible with this machine's Docker 29.x; the
-class javadoc documents the swap-back path), forces `rocketmq.enabled=false`,
-and wipes all three tables plus the `balance:*` keys before each test.
-Deletion order matters: reversal rows first, because of the self-FK.
+which boots the full app on a random port against a Testcontainers-managed
+MySQL 8 (singleton container, started once per JVM, seeded with the same
+repo-root `init.sql` the compose stack uses) and Redis, forces
+`rocketmq.enabled=false`, and wipes all three tables plus the `balance:*` keys
+before each test. Deletion order matters: reversal rows first, because of the
+self-FK. Two environment notes live in the class itself: a static block pins
+docker-java's `api.version=1.44` (Docker Engine 29+ rejects the bundled
+client's default 1.32 handshake with HTTP 400), and `@DynamicPropertySource`
+rewires the datasource and Redis properties to the containers' mapped ports.
 
 Current totals: 42 passing (unit via surefire, `*IT` via failsafe) + 1
 documented skip.

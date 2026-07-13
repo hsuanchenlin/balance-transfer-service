@@ -96,6 +96,23 @@ are robustness/consistency/performance refinements, prioritized.
    (`ROCKETMQ_SMOKE=true`): transfer -> broker -> push consumer -> `audit_log`
    row, green in 33s; default suite unchanged at 42 pass + 1 skip.
 
+9. **Test suite depended on the compose stack (Testcontainers "impossible"),
+   revisited in iteration 8.** The documented blocker turned out to be a
+   pinnable handshake problem, not an incompatibility: Docker Engine 29+
+   rejects Docker API versions below 1.44 with HTTP 400 (probed directly:
+   `/v1.32/info` -> 400, `/v1.44/info` -> 200), and the docker-java bundled
+   with every available Testcontainers release (3.4.2, even in 1.21.3) still
+   handshakes with 1.32. Meanwhile every IT required `docker compose up -d`
+   and a hand-managed shared MySQL/Redis - a hidden prerequisite and a
+   portability smell for a homework submission that reviewers will build.
+   -> Status: FIXED in iteration 8 - `AbstractIntegrationTest` pins
+   docker-java's `api.version=1.44` system property (respecting an external
+   override) and starts singleton Testcontainers MySQL (seeded with the
+   repo-root `init.sql`, same as compose) + Redis, rewired via
+   `@DynamicPropertySource`. Proven by running the full suite with the compose
+   MySQL/Redis containers stopped: 42 pass + 1 skip, and the opt-in
+   `RocketMqSmokeIT` still green against the compose broker (18.5s).
+
 ## P3 - accepted tradeoffs (document, don't change)
 
 -> Status: DOCUMENTED in iteration 3 - the first three now live in the README

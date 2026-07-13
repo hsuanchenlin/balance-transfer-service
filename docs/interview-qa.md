@@ -218,12 +218,12 @@ The centerpiece claims are about InnoDB behavior: row-lock serialization,
 conditional-update atomicity, lock ordering, `FOR UPDATE` read visibility. H2's
 lock semantics differ, so a green H2 test proves nothing about the production
 engine. Hence the failsafe suite (`*IT`, `AbstractIntegrationTest`) boots the
-real app against the compose MySQL and asserts external behavior - HTTP codes,
+real app against a Testcontainers-managed MySQL 8 seeded with the production
+`init.sql`, plus a Redis container, and asserts external behavior - HTTP codes,
 resulting balances, conservation of total money - while a few genuine units
 (cache fail-open, event handler, publisher serialization) are surefire unit
-tests with mocks. Testcontainers was the intended provider; this machine's
-Docker 29.x is incompatible with the bundled docker-java client, so the base
-class points at compose (swap documented in its Javadoc).
+tests with mocks. The suite is fully self-contained: `./mvnw verify` needs a
+Docker daemon and nothing else.
 
 ### Q15. What error contract does the API promise?
 
