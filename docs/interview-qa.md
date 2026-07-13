@@ -1,7 +1,10 @@
 # Code walkthrough and interviewer Q&A
 
 A guided tour of the codebase plus answers to the design questions this
-assignment is meant to probe. File references are clickable paths.
+assignment is meant to probe. File references are clickable paths. Part 1 is
+deliberately a 5-minute map; for the exhaustive file-by-file version (every
+class, schema column by column, every test class) see
+[code-walkthrough.md](code-walkthrough.md).
 
 ## Part 1 - the 5-minute code map
 

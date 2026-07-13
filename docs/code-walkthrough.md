@@ -1,0 +1,358 @@
+# Complete code walkthrough - every file explained
+
+This document explains every piece of the codebase: each source file, each test
+class, the schema, and the configuration. Read it top to bottom once and you
+can defend any line of this project.
+
+Companion docs, each with a different job:
+
+- [README.md](../README.md) - the design rationale (the "why" behind the five
+  load-bearing decisions) and the API reference.
+- [docs/interview-qa.md](interview-qa.md) - a 5-minute code map plus answers to
+  15 interviewer questions. Read that for the narrative; read this file for
+  exhaustive coverage.
+- [CONTEXT.md](../CONTEXT.md) and [docs/adr/](adr/) - the domain glossary and
+  the two architecture decision records the code keeps citing.
+
+## Suggested reading order
+
+1. [`init.sql`](../init.sql) - the three tables; every invariant starts here.
+2. [`TransferService`](../src/main/java/com/example/demo/service/TransferService.java) - the heart; everything else serves it.
+3. [`AccountRepository`](../src/main/java/com/example/demo/repository/AccountRepository.java) and [`TransferRepository`](../src/main/java/com/example/demo/repository/TransferRepository.java) - the exact SQL the service relies on.
+4. Controllers, exceptions, cache, events - the shell around the core.
+5. The test suite - each class maps to one guarantee.
+
+## The 30-second architecture
+
+One Spring Boot app, three backing services from `docker-compose.yaml`:
+
+| Service | Role | Port |
+|---|---|---|
+| MySQL 8.0 | The single correctness authority (ADR-0001). All money state. | 3306 |
+| Redis 7 | Read-path balance cache only. Never consulted for decisions. | 6379 |
+| RocketMQ 5.1.4 (namesrv + broker + console) | Carries async side-effects (audit log) after commit, best-effort. | 9876 (namesrv) / 10911 (broker) / 8088 (console UI) |
+
+Request flow: `controller` validates shape, `service` owns the transaction and
+the business rules, `repository` runs one explicit SQL statement per method.
+After a commit, an `afterCommit` hook evicts the Redis cache and publishes a
+RocketMQ event; the consumer writes an idempotent `audit_log` row.
+
+## Database schema ([`init.sql`](../init.sql))
+
+Mounted into the MySQL container via `docker-compose.yaml`, so it runs once on
+first container start.
+
+### `account` - the authoritative balances (mutable)
+
+| Column | Type | Why |
+|---|---|---|
+| `user_id` | `VARCHAR(64)` PK | Natural key; the assignment says userId is unique. |
+| `balance` | `DECIMAL(19,4)` | Exact decimal money, never floating point. 4 decimal places of sub-cent precision. |
+| `created_at` / `updated_at` | `TIMESTAMP` | Bookkeeping; `updated_at` auto-updates. |
+
+`CHECK (balance >= 0)` is a last-line-of-defense invariant: even if every
+application guard failed, MySQL would refuse a negative balance.
+
+### `transfer` - append-only history + idempotency + cancel linkage
+
+| Column | Why |
+|---|---|
+| `id` | Auto-increment PK; returned to clients as `transferId`. |
+| `from_user_id`, `to_user_id` | FKs to `account`; each has a secondary index for history lookups. |
+| `amount` | `DECIMAL(19,4)`, `CHECK (amount > 0)`. |
+| `status` | `COMPLETED` or `CANCELLED`. The guarded cancel flips this. |
+| `request_id` | Nullable idempotency key under `UNIQUE KEY uq_transfer_request_id`. NULLs are allowed and not deduplicated (MySQL unique indexes permit many NULLs), so requests without a key are never blocked. |
+| `reversal_of` | Self-FK. NULL for originals; on a compensating reversal it points at the cancelled transfer. This is how cancel stays append-only (ADR-0002). |
+| `created_at` | Indexed; drives history ordering and the 10-minute cancel window. |
+
+### `audit_log` - written asynchronously by the MQ consumer
+
+`UNIQUE KEY uq_audit_event (event_type, transfer_id)` plus `INSERT IGNORE` in
+the repository makes redelivery idempotent: RocketMQ is at-least-once, so the
+same event may arrive twice, but only one row lands. The key includes
+`event_type` so a `TransferCompleted` and a `TransferCancelled` row for the
+same transfer can coexist.
+
+## Main code, file by file
+
+### Entry point
+
+- [`DemoApplication`](../src/main/java/com/example/demo/DemoApplication.java) -
+  the standard `@SpringBootApplication` main class. Nothing custom.
+
+### `controller/` - HTTP in and out, zero business logic
+
+- [`UserController`](../src/main/java/com/example/demo/controller/UserController.java) -
+  `POST /users` (201, empty body) and `GET /users/{userId}/balance`. Delegates
+  straight to `UserService`.
+- [`TransferController`](../src/main/java/com/example/demo/controller/TransferController.java) -
+  `POST /transfers` (201), `GET /transfers?userId=&page=&size=` and
+  `POST /transfers/{transferId}/cancel`. Note the class-level `@Validated`:
+  that is what makes the `@Min`/`@Max`/`@NotBlank` annotations on the *query
+  parameters* fire (bean validation on request bodies only needs `@Valid`, but
+  parameter-level constraints need `@Validated` on the class, and violations
+  surface as `ConstraintViolationException`, handled in the exception layer).
+  One deliberate quirk: an idempotent replay also returns 201, because a retry
+  is the same logical creation - the handler has one success path.
+
+### `model/` - immutable request/response records
+
+All six are Java records: immutable, value-semantics, no boilerplate.
+
+- [`CreateUserRequest`](../src/main/java/com/example/demo/model/CreateUserRequest.java) -
+  `userId` (`@NotBlank`) + `initialBalance` (`@PositiveOrZero`,
+  `@Digits(integer = 15, fraction = 4)`). The `@Digits` bound is deliberately
+  stricter than the column's `DECIMAL(19,4)`, leaving headroom so a maximal
+  balance can still receive credits without overflowing the column.
+- [`TransferRequest`](../src/main/java/com/example/demo/model/TransferRequest.java) -
+  parties (`@NotBlank`), `amount` (`@Positive`, same `@Digits`), and an
+  *optional* `requestId` (no annotation: idempotency is opt-in).
+- [`TransferResponse`](../src/main/java/com/example/demo/model/TransferResponse.java) -
+  `{transferId, status}`, returned by both transfer and cancel.
+- [`BalanceResponse`](../src/main/java/com/example/demo/model/BalanceResponse.java) -
+  `{userId, balance}`.
+- [`TransferHistoryItem`](../src/main/java/com/example/demo/model/TransferHistoryItem.java) -
+  one history row; `reversalOf` is `Long` (nullable) and set only on
+  compensating reversals. Also reused internally as the return type of the
+  repository's single-row lookups.
+- [`PageResponse<T>`](../src/main/java/com/example/demo/model/PageResponse.java) -
+  generic `{content, page, size, totalElements}` envelope for history.
+
+### `service/` - business rules and transaction boundaries
+
+- [`UserService`](../src/main/java/com/example/demo/service/UserService.java) -
+  two methods, no `@Transactional` needed (each is a single statement).
+  `createUser` translates the PK violation (`DuplicateKeyException`) into
+  `UserAlreadyExistsException` (409) - the database is the uniqueness
+  authority, not a check-then-insert. `getBalance` is textbook cache-aside:
+  try `BalanceCache`, on miss read MySQL, populate the cache, return.
+
+- [`TransferService`](../src/main/java/com/example/demo/service/TransferService.java) -
+  the heart of the assignment. Three public methods, each one transaction:
+
+  **`transfer(request)`** (`@Transactional`), in order:
+  1. Reject self-transfer, reject unknown sender or receiver (fast 4xx before
+     touching money).
+  2. Idempotency replay: if `requestId` is set and a transfer already exists
+     under it, compare payloads. Same parties and same amount (compared with
+     `BigDecimal.compareTo`, so `100` equals `100.0000` from the DECIMAL
+     column) replays the original `{transferId, status}`; a mismatch throws
+     `IdempotencyConflictException` (422) because reusing a key for a
+     different request is a client bug, not a retry.
+  3. `moveInLockOrder(from, to, amount)` moves the money (see below).
+  4. Insert the `transfer` row. If the `UNIQUE(request_id)` constraint fires
+     here, a concurrent duplicate won the race: throw
+     `DuplicateRequestException` (409), which rolls back this attempt's
+     balance changes - the transfer applies at most once.
+  5. Register an `afterCommit` hook: evict both cached balances, publish
+     `TransferCompletedEvent`. Side-effects run only if the commit succeeded,
+     and the write transaction never blocks on Redis or RocketMQ.
+
+  **`history(userId, page, size)`** (`@Transactional(readOnly = true)`) -
+  clamps size to `MAX_PAGE_SIZE` (100) as a service-level backstop even though
+  the controller already validates it, computes the offset, and returns a
+  `PageResponse` with the total count.
+
+  **`cancel(transferId)`** (`@Transactional`) - cancel as compensation
+  (ADR-0002), never a delete:
+  1. `markCancelled` attempts the guarded status flip first. The `UPDATE ...
+     WHERE status = 'COMPLETED' AND reversal_of IS NULL AND created_at >
+     NOW() - INTERVAL 10 MINUTE` is atomic check-and-set: it also takes the
+     row lock, so two concurrent cancels serialize and only one flips.
+  2. If 0 rows flipped, classify why with `findByIdForUpdate` (a locking read
+     that sees the latest committed state, not this transaction's snapshot):
+     missing means 404, already `CANCELLED` means idempotent 200 replay,
+     otherwise 409 (outside the window, or the target is itself a reversal).
+  3. If flipped, read the original and move the money back, receiver to
+     sender, through the same `moveInLockOrder`. The conditional debit means
+     a receiver who already spent the money yields `InsufficientFundsException`
+     (409) and the whole cancel, including the status flip, rolls back.
+  4. Append the reversal row (`insertReversal`, linked via `reversal_of`) and
+     register the same afterCommit hook shape (evict both, publish
+     `TransferCancelledEvent`).
+
+  **The private helpers** encode the two core safety mechanisms:
+  - `moveInLockOrder` touches the two account rows in ascending `userId`
+    order, whichever direction the money flows. Concurrent A→B and B→A
+    transfers therefore acquire row locks in the same order and cannot
+    deadlock.
+  - `debitOrThrow` maps 0 affected rows to `InsufficientFundsException`; the
+    conditional `UPDATE ... WHERE balance >= amount` is the atomic
+    check-and-decrement (ADR-0001).
+  - `creditOrThrow` maps 0 affected rows to `IllegalStateException`. It is
+    unreachable today (existence is pre-checked, accounts are never deleted)
+    but keeps the money path loud-by-default against future refactors: a
+    dropped credit must never be silent.
+  - `afterCommit(Runnable)` wraps
+    `TransactionSynchronizationManager.registerSynchronization` so the two
+    call sites stay declarative.
+
+### `repository/` - one explicit SQL statement per method (`JdbcClient`)
+
+Explicit SQL is a deliberate tech choice (see README "Tech-choice note"): the
+correctness story lives in the exact SQL, so it is kept visible.
+
+- [`AccountRepository`](../src/main/java/com/example/demo/repository/AccountRepository.java) -
+  `insert`, `findBalance`, `exists`, and the two money primitives. `debit` is
+  the load-bearing statement of the project:
+  `UPDATE account SET balance = balance - :amount WHERE user_id = :userId AND
+  balance >= :amount`. The relative update plus the guard inside one statement
+  means InnoDB's row lock makes check-and-decrement indivisible; 0 rows means
+  insufficient funds. `credit` is the unconditional counterpart.
+- [`TransferRepository`](../src/main/java/com/example/demo/repository/TransferRepository.java) -
+  `insertCompleted` (returns the generated key; the UNIQUE `request_id` is the
+  concurrency-safe idempotency gate), `insertReversal` (same insert with
+  `reversal_of` instead of `request_id`), `findByRequestId` (full payload, so
+  replay can verify the retry matches), `findById`, `findByIdForUpdate`
+  (`FOR UPDATE` so a failed cancel is classified against the latest committed
+  state), `listByUser` (OR over sender/receiver, `ORDER BY created_at DESC,
+  id DESC` for a stable total order when timestamps collide), `countByUser`,
+  and `markCancelled` (the guarded flip described above). The private
+  `mapItem` row mapper has the one subtle JDBC point in the codebase:
+  `rs.wasNull()` must be checked immediately after `rs.getLong("reversal_of")`
+  because it reflects only the most recent column read.
+- [`AuditRepository`](../src/main/java/com/example/demo/repository/AuditRepository.java) -
+  `recordOnce` uses `INSERT IGNORE` against the `(event_type, transfer_id)`
+  unique key, making consumer redelivery idempotent. `countByTransferId`
+  exists for tests.
+
+### `cache/` - Redis, read path only
+
+- [`BalanceCache`](../src/main/java/com/example/demo/cache/BalanceCache.java) -
+  wraps `StringRedisTemplate` with keys `balance:{userId}`, values stored via
+  `BigDecimal.toPlainString()`, TTL 5 minutes. Two properties matter:
+  - *Fail-open*: every operation catches `DataAccessException` and degrades
+    (a failed `get` is a miss, a failed `put`/`evict` is a logged no-op).
+    Because the DB is the authority, a Redis outage must never fail a request;
+    before this hardening, a dead Redis 500'd balance reads and even committed
+    transfers (the afterCommit eviction threw).
+  - The TTL bounds the staleness any missed eviction can cause.
+
+### `event/` - RocketMQ DTOs, publisher pair, consumer handler
+
+- [`TransferEventPublisher`](../src/main/java/com/example/demo/event/TransferEventPublisher.java) -
+  the two-method interface the service depends on. The service never knows
+  whether messaging is on.
+- [`RocketMqTransferEventPublisher`](../src/main/java/com/example/demo/event/RocketMqTransferEventPublisher.java) -
+  active when `rocketmq.enabled=true`. Serializes the event with Jackson and
+  sends it to the configured topic with the event type as the message *tag*.
+  Best-effort by design: the transfer is already committed when this runs, so
+  a send failure is logged and swallowed (the production evolution is a
+  transactional outbox; see README "Known limits").
+- [`NoOpTransferEventPublisher`](../src/main/java/com/example/demo/event/NoOpTransferEventPublisher.java) -
+  active when messaging is off (`matchIfMissing = true`, so also the default).
+  Transfers work identically minus the message. This pair is why the test
+  suite runs without a broker.
+- [`TransferCompletedEvent`](../src/main/java/com/example/demo/event/TransferCompletedEvent.java) /
+  [`TransferCancelledEvent`](../src/main/java/com/example/demo/event/TransferCancelledEvent.java) -
+  message payload records. The cancelled event carries both the original
+  `transferId` (the audit key) and the `reversalId`, plus the original
+  parties so the consumer can evict both caches.
+- [`TransferEventHandler`](../src/main/java/com/example/demo/event/TransferEventHandler.java) -
+  the consumer-side logic, kept broker-agnostic (plain component, unit
+  testable): write the idempotent audit row, evict both balances. It also owns
+  the event-type constants that double as RocketMQ tags. Cancelled events are
+  keyed on the *original* transfer id, so completed and cancelled audit rows
+  for the same transfer coexist under the composite unique key.
+
+### `config/`
+
+- [`RocketMqConfig`](../src/main/java/com/example/demo/config/RocketMqConfig.java) -
+  the only configuration class. Gated on
+  `@ConditionalOnProperty("rocketmq.enabled")` so tests never start it. Wires
+  the raw `DefaultMQProducer` (started/stopped via bean lifecycle) and a
+  `DefaultMQPushConsumer` whose listener routes by message tag to the handler,
+  returning `RECONSUME_LATER` on any exception so RocketMQ redelivers (which
+  is safe, because the handler is idempotent). Producer group, consumer group,
+  name server and topic all come from properties.
+
+### `exception/` - the error model
+
+- [`ApiError`](../src/main/java/com/example/demo/exception/ApiError.java) -
+  the single error shape every failure returns:
+  `{timestamp, status, error, message, path}`.
+- [`GlobalExceptionHandler`](../src/main/java/com/example/demo/exception/GlobalExceptionHandler.java) -
+  one `@RestControllerAdvice` mapping every exception to that shape:
+
+  | Exception | Status | Trigger |
+  |---|---|---|
+  | `SelfTransferException` | 400 | from == to |
+  | `MethodArgumentNotValidException` | 400 | invalid request body (`@Valid`) |
+  | `ConstraintViolationException` | 400 | invalid query param (`@Validated`) |
+  | `MissingServletRequestParameterException` | 400 | missing required query param |
+  | `MethodArgumentTypeMismatchException` | 400 | e.g. non-numeric transferId |
+  | `HttpMessageNotReadableException` | 400 | malformed JSON body |
+  | `UserNotFoundException`, `TransferNotFoundException` | 404 | unknown user / transfer |
+  | `UserAlreadyExistsException` | 409 | duplicate userId |
+  | `InsufficientFundsException` | 409 | debit guard hit 0 rows |
+  | `DuplicateRequestException` | 409 | lost a concurrent same-requestId race |
+  | `CancellationNotAllowedException` | 409 | outside the 10-minute window / reversal target |
+  | `IdempotencyConflictException` | 422 | requestId reused with a different payload |
+  | anything implementing Spring's `ErrorResponse` | its own status | 405, unknown route 404, 406/415 - honored, not masked as 500 |
+  | everything else | 500 | genuine bug: stack logged, no internals leaked |
+
+  The `ErrorResponse` special case in the catch-all is the subtle part: Spring
+  Boot 3 routes unknown URLs through `NoResourceFoundException`, which a naive
+  `@ExceptionHandler(Exception.class)` would turn into a 500.
+- The seven domain exception classes are one-liners; the two with javadoc
+  worth reading are
+  [`CancellationNotAllowedException`](../src/main/java/com/example/demo/exception/CancellationNotAllowedException.java)
+  (why already-cancelled is *not* an error) and
+  [`IdempotencyConflictException`](../src/main/java/com/example/demo/exception/IdempotencyConflictException.java)
+  (the Stripe-style 422 contract).
+
+## Configuration ([`application.yaml`](../src/main/resources/application.yaml))
+
+- `spring.datasource.*` - the compose MySQL (`taskdb`, `taskuser`), Hikari
+  pool capped at 10.
+- `spring.data.redis.*` - the compose Redis.
+- `rocketmq.*` - custom properties (the app uses the raw `rocketmq-client`,
+  not the Spring Boot starter): `enabled` (the publisher/consumer gate),
+  `name-server`, `producer.group`, `consumer.group`, `topic.transfer`.
+  `enabled` defaults to `true` here for live runs; tests force it to `false`.
+
+## Test suite - what each class proves
+
+All integration tests extend
+[`AbstractIntegrationTest`](../src/test/java/com/example/demo/support/AbstractIntegrationTest.java),
+which boots the full app on a random port against the real compose MySQL and
+Redis (Testcontainers is incompatible with this machine's Docker 29.x; the
+class javadoc documents the swap-back path), forces `rocketmq.enabled=false`,
+and wipes all three tables plus the `balance:*` keys before each test.
+Deletion order matters: reversal rows first, because of the self-FK.
+
+Current totals: 42 passing (unit via surefire, `*IT` via failsafe) + 1
+documented skip.
+
+| Class | Kind | Proves |
+|---|---|---|
+| [`TransferConcurrencyIT`](../src/test/java/com/example/demo/TransferConcurrencyIT.java) | IT | The centerpiece: under concurrent overspend and bidirectional storms, no lost updates, no negative balance, total money conserved. |
+| [`TransferEndpointIT`](../src/test/java/com/example/demo/TransferEndpointIT.java) | IT | Happy path 201 + the 4xx contract (insufficient funds, unknown parties, self-transfer, non-positive amount). |
+| [`TransferIdempotencyIT`](../src/test/java/com/example/demo/TransferIdempotencyIT.java) | IT | Sequential replay returns the original; payload mismatch is 422 and moves no money; scale-insensitive amount comparison; concurrent duplicates apply exactly once. |
+| [`TransferCancelIT`](../src/test/java/com/example/demo/TransferCancelIT.java) | IT | Reversal restores balances; double-cancel idempotent; 409 when receiver can't cover, outside the window, or target is a reversal; 404 unknown. |
+| [`TransferHistoryIT`](../src/test/java/com/example/demo/TransferHistoryIT.java) | IT | Newest-first ordering as sender or receiver, stable pagination, empty page, 400 on bad paging. |
+| [`UserEndpointIT`](../src/test/java/com/example/demo/UserEndpointIT.java) | IT | Create/balance happy paths, 409 duplicate, 404 unknown, 400 negative initial balance. |
+| [`BalanceCacheIT`](../src/test/java/com/example/demo/BalanceCacheIT.java) | IT | Cache-aside works: second read served from Redis without hitting MySQL; a transfer evicts. |
+| [`AuditIdempotencyIT`](../src/test/java/com/example/demo/AuditIdempotencyIT.java) | IT | Redelivering the same event to the handler writes exactly one audit row (no broker needed). |
+| [`ErrorModelIT`](../src/test/java/com/example/demo/ErrorModelIT.java) | IT | Malformed JSON (400), unsupported method (405) and unknown route (404) all come back in the `ApiError` shape. |
+| [`BalanceCacheTest`](../src/test/java/com/example/demo/cache/BalanceCacheTest.java) | unit | The fail-open contract: get degrades to a miss, put/evict swallow Redis failures, hits parse. |
+| [`TransferEventHandlerTest`](../src/test/java/com/example/demo/event/TransferEventHandlerTest.java) | unit | Handler records audit (cancelled events keyed on the original id) and evicts both balances. |
+| [`RocketMqTransferEventPublisherTest`](../src/test/java/com/example/demo/event/RocketMqTransferEventPublisherTest.java) | unit | The publisher serializes the event and targets the configured topic. |
+| [`DemoApplicationTests`](../src/test/java/com/example/demo/DemoApplicationTests.java) | unit | The Spring context wires up (smoke). |
+| [`RocketMqSmokeIT`](../src/test/java/com/example/demo/RocketMqSmokeIT.java) | IT, `@Disabled` | The true end-to-end broker path. Skipped because the compose broker advertises a container-internal address; the class javadoc has the manual-run recipe, and the logic is covered by the handler unit test + `AuditIdempotencyIT`. |
+
+## The five invariants to hold in your head
+
+If you remember nothing else, remember these; every file above serves one:
+
+1. **Money moves only inside one DB transaction**, and the debit is an atomic
+   conditional update. No app-level check-then-write, no distributed lock.
+2. **Locks are always taken in ascending userId order**, so opposing transfers
+   cannot deadlock.
+3. **An idempotency key applies at most once**, enforced by a UNIQUE
+   constraint (not a lookup), replayed only for identical payloads.
+4. **History is append-only**; cancel compensates with a reversal row, never
+   an update-in-place of balances or a delete.
+5. **Redis and RocketMQ are helpers, never authorities**: cache is fail-open
+   and TTL-bounded, events are after-commit and best-effort, the consumer is
+   idempotent because delivery is at-least-once.

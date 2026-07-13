@@ -133,7 +133,7 @@ Standard layered structure under `src/main/java/com/example/demo/`:
 - `config/` - RocketMQ producer/consumer wiring
 - `exception/` - domain exceptions + `GlobalExceptionHandler`
 
-Ubiquitous language is fixed in [CONTEXT.md](CONTEXT.md); the schema is in [init.sql](init.sql).
+Ubiquitous language is fixed in [CONTEXT.md](CONTEXT.md); the schema is in [init.sql](init.sql). For an exhaustive file-by-file tour (every class, the schema column by column, and what each test proves), see [docs/code-walkthrough.md](docs/code-walkthrough.md).
 
 ## Tech-choice note
 

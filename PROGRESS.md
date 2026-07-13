@@ -85,6 +85,7 @@ A staff-level review of the whole codebase lives in `.scratch/balance-transfer-s
 - **Config symmetry:** the RocketMQ consumer group now comes from `rocketmq.consumer.group` in `application.yaml` instead of a hardcoded string, mirroring the producer group.
 - **Documented limits:** new README section "Known limits and scale evolutions" (history OR-query vs UNION ALL + keyset, offset-paging drift, cache-aside stale-read window, best-effort publish vs outbox), closing the last review-backlog items.
 - **Interview prep:** `docs/interview-qa.md` - code walkthrough + answers to the 15 design questions an interviewer would ask.
+- **Full comprehension guide:** `docs/code-walkthrough.md` - exhaustive file-by-file walkthrough (every class, schema column by column, config keys, and what each test class proves), for understanding every single piece of the code.
 
 ## To continue (workflow for future changes)
 
