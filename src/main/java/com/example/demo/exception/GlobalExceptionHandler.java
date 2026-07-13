@@ -1,19 +1,22 @@
 package com.example.demo.exception;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.time.OffsetDateTime;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    @ExceptionHandler(UserNotFoundException.class)
-    public ResponseEntity<ApiError> handleNotFound(UserNotFoundException ex, HttpServletRequest req) {
+    @ExceptionHandler({UserNotFoundException.class, TransferNotFoundException.class})
+    public ResponseEntity<ApiError> handleNotFound(RuntimeException ex, HttpServletRequest req) {
         return build(HttpStatus.NOT_FOUND, ex.getMessage(), req);
     }
 
@@ -32,6 +35,12 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.CONFLICT, ex.getMessage(), req);
     }
 
+    @ExceptionHandler(CancellationNotAllowedException.class)
+    public ResponseEntity<ApiError> handleCancellationNotAllowed(CancellationNotAllowedException ex,
+                                                                 HttpServletRequest req) {
+        return build(HttpStatus.CONFLICT, ex.getMessage(), req);
+    }
+
     @ExceptionHandler(SelfTransferException.class)
     public ResponseEntity<ApiError> handleSelfTransfer(SelfTransferException ex, HttpServletRequest req) {
         return build(HttpStatus.BAD_REQUEST, ex.getMessage(), req);
@@ -44,6 +53,32 @@ public class GlobalExceptionHandler {
                 .findFirst()
                 .orElse("Validation failed");
         return build(HttpStatus.BAD_REQUEST, message, req);
+    }
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<ApiError> handleConstraintViolation(ConstraintViolationException ex,
+                                                              HttpServletRequest req) {
+        String message = ex.getConstraintViolations().stream()
+                .map(v -> {
+                    String path = v.getPropertyPath().toString();
+                    String field = path.substring(path.lastIndexOf('.') + 1);
+                    return field + " " + v.getMessage();
+                })
+                .findFirst()
+                .orElse("Validation failed");
+        return build(HttpStatus.BAD_REQUEST, message, req);
+    }
+
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ApiError> handleMissingParam(MissingServletRequestParameterException ex,
+                                                       HttpServletRequest req) {
+        return build(HttpStatus.BAD_REQUEST, ex.getParameterName() + " is required", req);
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiError> handleTypeMismatch(MethodArgumentTypeMismatchException ex,
+                                                       HttpServletRequest req) {
+        return build(HttpStatus.BAD_REQUEST, ex.getName() + " has an invalid value", req);
     }
 
     private ResponseEntity<ApiError> build(HttpStatus status, String message, HttpServletRequest req) {

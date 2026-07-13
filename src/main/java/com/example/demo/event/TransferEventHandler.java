@@ -7,14 +7,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
 /**
- * Consumer-side handler for {@link TransferCompletedEvent}. Runs the async
- * side-effects — an idempotent audit record and cache invalidation. Safe to
- * invoke on redelivery (audit insert is idempotent; eviction is naturally so).
+ * Consumer-side handler for transfer events. Runs the async side-effects — an
+ * idempotent audit record and cache invalidation. Safe to invoke on redelivery
+ * (audit insert is idempotent; eviction is naturally so). The event-type tags
+ * double as RocketMQ message tags so the consumer can route by kind.
  */
 @Component
 public class TransferEventHandler {
 
-    static final String EVENT_TYPE = "TransferCompleted";
+    public static final String COMPLETED_EVENT_TYPE = "TransferCompleted";
+    public static final String CANCELLED_EVENT_TYPE = "TransferCancelled";
 
     private final AuditRepository audit;
     private final BalanceCache cache;
@@ -27,14 +29,24 @@ public class TransferEventHandler {
     }
 
     public void handle(TransferCompletedEvent event) {
-        String payload;
-        try {
-            payload = mapper.writeValueAsString(event);
-        } catch (JsonProcessingException e) {
-            payload = null;
-        }
-        audit.recordOnce(EVENT_TYPE, event.transferId(), payload);
+        audit.recordOnce(COMPLETED_EVENT_TYPE, event.transferId(), toJson(event));
         cache.evict(event.fromUserId());
         cache.evict(event.toUserId());
+    }
+
+    public void handleCancelled(TransferCancelledEvent event) {
+        // Keyed on the original transfer id so a completed + a cancelled audit row
+        // for the same transfer coexist (the UNIQUE key is event_type + transfer_id).
+        audit.recordOnce(CANCELLED_EVENT_TYPE, event.transferId(), toJson(event));
+        cache.evict(event.fromUserId());
+        cache.evict(event.toUserId());
+    }
+
+    private String toJson(Object event) {
+        try {
+            return mapper.writeValueAsString(event);
+        } catch (JsonProcessingException e) {
+            return null;
+        }
     }
 }

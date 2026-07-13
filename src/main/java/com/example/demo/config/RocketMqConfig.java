@@ -1,5 +1,6 @@
 package com.example.demo.config;
 
+import com.example.demo.event.TransferCancelledEvent;
 import com.example.demo.event.TransferCompletedEvent;
 import com.example.demo.event.TransferEventHandler;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -39,9 +40,14 @@ public class RocketMqConfig {
         consumer.registerMessageListener((MessageListenerConcurrently) (messages, context) -> {
             try {
                 for (var message : messages) {
-                    TransferCompletedEvent event =
-                            mapper.readValue(message.getBody(), TransferCompletedEvent.class);
-                    handler.handle(event);
+                    // Route by the message tag set by the publisher.
+                    if (TransferEventHandler.CANCELLED_EVENT_TYPE.equals(message.getTags())) {
+                        handler.handleCancelled(
+                                mapper.readValue(message.getBody(), TransferCancelledEvent.class));
+                    } else {
+                        handler.handle(
+                                mapper.readValue(message.getBody(), TransferCompletedEvent.class));
+                    }
                 }
                 return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
             } catch (Exception e) {

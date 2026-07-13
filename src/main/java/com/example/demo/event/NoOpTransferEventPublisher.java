@@ -12,4 +12,9 @@ public class NoOpTransferEventPublisher implements TransferEventPublisher {
     public void publishCompleted(TransferCompletedEvent event) {
         // messaging disabled
     }
+
+    @Override
+    public void publishCancelled(TransferCancelledEvent event) {
+        // messaging disabled
+    }
 }

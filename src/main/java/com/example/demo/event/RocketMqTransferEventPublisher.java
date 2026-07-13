@@ -9,7 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
-/** Active when RocketMQ is enabled: publishes the event, best-effort. */
+/** Active when RocketMQ is enabled: publishes transfer events, best-effort. */
 @Component
 @ConditionalOnProperty(name = "rocketmq.enabled", havingValue = "true")
 public class RocketMqTransferEventPublisher implements TransferEventPublisher {
@@ -29,14 +29,23 @@ public class RocketMqTransferEventPublisher implements TransferEventPublisher {
 
     @Override
     public void publishCompleted(TransferCompletedEvent event) {
+        send(TransferEventHandler.COMPLETED_EVENT_TYPE, event, event.transferId());
+    }
+
+    @Override
+    public void publishCancelled(TransferCancelledEvent event) {
+        send(TransferEventHandler.CANCELLED_EVENT_TYPE, event, event.transferId());
+    }
+
+    private void send(String tag, Object event, long transferId) {
         try {
             byte[] body = mapper.writeValueAsBytes(event);
-            producer.send(new Message(topic, TransferEventHandler.EVENT_TYPE, body));
+            producer.send(new Message(topic, tag, body));
         } catch (Exception e) {
             // Best-effort: the transfer is already committed — a messaging failure
             // must never fail it. A real system would fall back to a transactional
             // outbox; here we log and move on.
-            log.warn("Failed to publish TransferCompleted for transfer {}", event.transferId(), e);
+            log.warn("Failed to publish {} for transfer {}", tag, transferId, e);
         }
     }
 }

@@ -27,4 +27,18 @@ class TransferEventHandlerTest {
         verify(cache).evict("alice");
         verify(cache).evict("bob");
     }
+
+    @Test
+    void handleCancelled_recordsAuditUnderOriginalId_andEvictsBothBalances() {
+        var audit = mock(AuditRepository.class);
+        var cache = mock(BalanceCache.class);
+        var handler = new TransferEventHandler(audit, cache, new ObjectMapper());
+        var event = new TransferCancelledEvent(42L, 43L, "alice", "bob", new BigDecimal("10"));
+
+        handler.handleCancelled(event);
+
+        verify(audit).recordOnce(eq("TransferCancelled"), eq(42L), anyString());
+        verify(cache).evict("alice");
+        verify(cache).evict("bob");
+    }
 }

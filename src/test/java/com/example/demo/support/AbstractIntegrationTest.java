@@ -39,6 +39,9 @@ public abstract class AbstractIntegrationTest {
     @BeforeEach
     void cleanState() {
         jdbc.sql("DELETE FROM audit_log").update();
+        // Reversal rows carry a self-FK (reversal_of → transfer.id), so delete the
+        // children before the transfers they point at, then the accounts.
+        jdbc.sql("DELETE FROM transfer WHERE reversal_of IS NOT NULL").update();
         jdbc.sql("DELETE FROM transfer").update();
         jdbc.sql("DELETE FROM account").update();
         Set<String> keys = redis.keys("balance:*");
