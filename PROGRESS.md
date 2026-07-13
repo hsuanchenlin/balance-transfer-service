@@ -21,7 +21,7 @@ A RESTful balance-transfer service (Spring Boot 3 / Java 21, MySQL + Redis + Roc
 All five assignment endpoints are implemented; README/HELP/curl submission docs are written.
 
 **Tests:** 32 pass + 1 documented skip via `mvn verify` (surefire 4 unit + failsafe 28 IT).
-**Git:** branch `balance-transfer-service`, open as **PR #1** → https://github.com/hsuanchenlin/balance-transfer-service/pull/1. Tickets 07–09 not yet committed as of this update.
+**Git:** branch `balance-transfer-service`, open as **PR #1** → https://github.com/hsuanchenlin/balance-transfer-service/pull/1. Tickets 07–09 are committed (history + cancel + submission docs, plus a `markCancelled` reversal-row regression fix).
 
 ## How to run
 
@@ -81,5 +81,5 @@ Design canon (READ THESE before changing behavior):
 3. Commit (`Ticket 0N: <title>` — do **not** add an agent co-author per repo convention) and `git push` (extends PR #1).
 
 ### Not yet done
-- **Commit + push tickets 07–09** (working tree has uncommitted changes as of this update).
+- **Push the branch** to extend PR #1 (tickets 07–09 are committed locally).
 - Optional: a Postman collection (curl script covers the same ground); resolving the Testcontainers / RocketMQ-smoke gotchas above.
