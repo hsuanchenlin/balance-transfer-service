@@ -65,6 +65,17 @@ are robustness/consistency/performance refinements, prioritized.
    above) - new README section "Known limits and scale evolutions" plus a javadoc
    pointer on `TransferRepository.listByUser`.
 
+7. **Stale gRPC pin in `pom.xml`.** The baseline skeleton's `dependencyManagement`
+   block force-downgraded the gRPC artifacts that `rocketmq-client` 5.3.2 pulls in
+   transitively to 1.33.0 (October 2020) - `grpc-netty-shaded` at that version
+   bundles a Netty with multiple known CVEs. Nothing in the app declares gRPC
+   directly, so the pin had no purpose beyond overriding upstream's tested version.
+   -> Status: FIXED in iteration 6 - block removed; gRPC now resolves to 1.53.0,
+   the version RocketMQ 5.3.2 itself manages. Verified by `dependency:tree`, the
+   full suite (42 pass + 1 skip), and a live boot with `rocketmq.enabled=true`
+   plus a real transfer (the pre-existing host-to-broker publish timeout was
+   reproduced identically on the old pin, ruling out a regression).
+
 ## P3 - accepted tradeoffs (document, don't change)
 
 -> Status: DOCUMENTED in iteration 3 - the first three now live in the README

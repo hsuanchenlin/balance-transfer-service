@@ -301,6 +301,25 @@ correctness story lives in the exact SQL, so it is kept visible.
   [`IdempotencyConflictException`](../src/main/java/com/example/demo/exception/IdempotencyConflictException.java)
   (the Stripe-style 422 contract).
 
+## Build file ([`pom.xml`](../pom.xml))
+
+Spring Boot 3.5 parent, Java 21. Direct dependencies and why each exists:
+
+- `spring-boot-starter-web` + `spring-boot-starter-validation` - REST layer
+  and Bean Validation on the request records.
+- `spring-boot-starter-jdbc` - `JdbcClient` (deliberately no JPA; see the
+  repository section).
+- `spring-boot-starter-data-redis` - `StringRedisTemplate` for the cache.
+- `mysql-connector-j` (runtime scope) - the JDBC driver.
+- `rocketmq-client` 5.3.2 - the raw Apache client, not the Spring Boot
+  starter, so the publisher/consumer lifecycle stays explicit and gated by
+  `rocketmq.enabled`. It transitively brings gRPC 1.53.0 (RocketMQ's own
+  managed version); the app declares no gRPC itself.
+- `spring-boot-starter-test` - JUnit 5, AssertJ, MockMvc et al.
+
+The only build customization is the `maven-failsafe-plugin` execution that
+runs `*IT` classes during `./mvnw verify` (surefire handles `*Test` units).
+
 ## Configuration ([`application.yaml`](../src/main/resources/application.yaml))
 
 - `spring.datasource.*` - the compose MySQL (`taskdb`, `taskuser`), Hikari

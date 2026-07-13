@@ -87,6 +87,7 @@ A staff-level review of the whole codebase lives in `.scratch/balance-transfer-s
 - **Interview prep:** `docs/interview-qa.md` - code walkthrough + answers to the 15 design questions an interviewer would ask.
 - **Full comprehension guide:** `docs/code-walkthrough.md` - exhaustive file-by-file walkthrough (every class, schema column by column, config keys, and what each test class proves), for understanding every single piece of the code.
 - **Postman collection:** `scripts/balance-transfer.postman_collection.json` - the curl walkthrough as a runnable collection with per-request assertions (21 requests, 30 assertions); verified green with `npx newman run` against the live app.
+- **Dependency hygiene:** removed the baseline skeleton's `dependencyManagement` block that force-downgraded RocketMQ's transitive gRPC to 1.33.0 (2020, CVE-carrying Netty bundle); gRPC now resolves to 1.53.0, the version `rocketmq-client` 5.3.2 itself manages. Verified via `dependency:tree`, full suite, and a live boot + transfer with RocketMQ enabled.
 
 ## To continue (workflow for future changes)
 
