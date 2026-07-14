@@ -97,5 +97,5 @@ A staff-level review of the whole codebase lives in `.scratch/balance-transfer-s
 2. Failing test → minimal code → `./mvnw verify` green (needs only a Docker daemon; `docker compose up -d` is for running the app or the RocketMQ smoke test).
 3. Commit (`Ticket 0N: <title>` — do **not** add an agent co-author per repo convention). PR #1 is merged, so start future work on a **new branch off `main`** and open a new PR; do not reuse `balance-transfer-service`.
 
-### Optional follow-ups (no pending assignment work)
-The assignment is complete and merged; nothing is required. Both former environment gotchas are resolved: the smoke test runs for real, opt-in via `ROCKETMQ_SMOKE=true`, and the integration suite is self-contained on Testcontainers.
+### Nothing pending
+The assignment is complete and merged; nothing is required. The former optional follow-ups are all delivered: the Postman collection (`scripts/balance-transfer.postman_collection.json`), the self-contained Testcontainers integration suite (env gotcha 1 resolved), and the real opt-in RocketMQ smoke test via `ROCKETMQ_SMOKE=true` (env gotcha 2 resolved).
