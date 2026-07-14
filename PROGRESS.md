@@ -26,7 +26,7 @@ All five assignment endpoints are implemented; README/HELP/curl submission docs 
 ## How to run
 
 ```bash
-./mvnw verify                 # unit (surefire) + integration *IT (failsafe); self-contained (Testcontainers), needs only a Docker daemon
+./mvnw verify                 # unit (surefire) + integration *IT (failsafe) + quality gates (see README "Test"/"CI"); self-contained (Testcontainers), needs only a Docker daemon
 docker compose up -d          # MySQL(3306) + Redis(6379) + RocketMQ; for running the app / smoke test, NOT needed for verify
 ./mvnw spring-boot:run        # run the app (needs the stack up)
 docker compose down           # stop the stack

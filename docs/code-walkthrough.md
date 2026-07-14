@@ -326,8 +326,11 @@ Spring Boot 3.5 parent, Java 21. Direct dependencies and why each exists:
   integration suite; the Redis side uses the plain `GenericContainer` from
   testcontainers core, so no extra module is needed.
 
-The only build customization is the `maven-failsafe-plugin` execution that
-runs `*IT` classes during `./mvnw verify` (surefire handles `*Test` units).
+Build customizations: the `maven-failsafe-plugin` execution that runs `*IT`
+classes during `./mvnw verify` (surefire handles `*Test` units), plus the two
+quality gates bound to `verify` - the `jacoco-maven-plugin` coverage check and
+the `spotbugs-maven-plugin` static-analysis check (thresholds and how CI runs
+them are documented in the README's Test and CI sections).
 
 ## Configuration ([`application.yaml`](../src/main/resources/application.yaml))
 
