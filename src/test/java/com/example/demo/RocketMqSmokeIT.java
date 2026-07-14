@@ -13,9 +13,9 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * End-to-end RocketMQ smoke test: a completed transfer publishes a
- * {@code TransferCompleted} event through the real compose broker and the push
- * consumer writes the {@code audit_log} row.
+ * End-to-end RocketMQ smoke test: a completed transfer writes an outbox row, the
+ * relay publishes the {@code TransferCompleted} event through the real compose
+ * broker, and the push consumer writes the {@code audit_log} row.
  *
  * <p>Opt-in via {@code ROCKETMQ_SMOKE=true} because it needs the compose broker to
  * advertise a host-reachable address ({@code brokerIP1 = 127.0.0.1} in
@@ -29,7 +29,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @EnabledIfEnvironmentVariable(named = "ROCKETMQ_SMOKE", matches = "true",
         disabledReason = "Needs the host-reachable compose broker; opt in with ROCKETMQ_SMOKE=true")
-@TestPropertySource(properties = "rocketmq.enabled=true")
+// Re-enable both halves the base class switches off: the real broker publisher
+// and the scheduled outbox relay that feeds it.
+@TestPropertySource(properties = {"rocketmq.enabled=true", "outbox.relay.enabled=true"})
 class RocketMqSmokeIT extends AbstractIntegrationTest {
 
     @Autowired

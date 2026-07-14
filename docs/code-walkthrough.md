@@ -30,12 +30,14 @@ One Spring Boot app, three backing services from `docker-compose.yaml`:
 |---|---|---|
 | MySQL 8.0 | The single correctness authority (ADR-0001). All money state. | 3306 |
 | Redis 7 | Read-path balance cache only. Never consulted for decisions. | 6379 |
-| RocketMQ 5.1.4 (namesrv + broker + console) | Carries async side-effects (audit log) after commit, best-effort. | 9876 (namesrv) / 10911 (broker) / 8088 (console UI) |
+| RocketMQ 5.1.4 (namesrv + broker + console) | Carries async side-effects (audit log), fed by a transactional outbox, at-least-once. | 9876 (namesrv) / 10911 (broker) / 8088 (console UI) |
 
 Request flow: `controller` validates shape, `service` owns the transaction and
 the business rules, `repository` runs one explicit SQL statement per method.
-After a commit, an `afterCommit` hook evicts the Redis cache and publishes a
-RocketMQ event; the consumer writes an idempotent `audit_log` row.
+The transfer's event is appended to the `outbox_event` table inside the same
+transaction as the money movement; after the commit an `afterCommit` hook
+evicts the Redis cache, and the scheduled `OutboxRelay` publishes the row to
+RocketMQ, whose consumer writes an idempotent `audit_log` row.
 
 ## Database schema ([`init.sql`](../init.sql))
 
@@ -72,6 +74,23 @@ the repository makes redelivery idempotent: RocketMQ is at-least-once, so the
 same event may arrive twice, but only one row lands. The key includes
 `event_type` so a `TransferCompleted` and a `TransferCancelled` row for the
 same transfer can coexist.
+
+### `outbox_event` - the transactional outbox feeding RocketMQ
+
+| Column | Why |
+|---|---|
+| `id` | Auto-increment PK; also the relay's publish order. |
+| `event_type` | `TransferCompleted` / `TransferCancelled`; doubles as the RocketMQ message tag. |
+| `payload` | The event DTO as JSON - the exact message body the relay sends. |
+| `attempts` | Failed publish attempts so far; drives the backoff. |
+| `next_attempt_at` | Earliest time the relay may (re)try the row; a failure pushes it out 2s, 4s, ... capped at 60s. |
+| `published_at` | NULL until delivered; the relay's `WHERE published_at IS NULL` scan key (indexed with `id`). |
+
+A row is inserted in the *same transaction* as the transfer or cancel it
+describes, so the event exists iff the business change committed - that is
+the outbox guarantee. The relay marks the row published only after the broker
+accepts it; a crash in between re-sends (at-least-once), which the idempotent
+consumer absorbs.
 
 ## Main code, file by file
 
@@ -152,9 +171,11 @@ All six are Java records: immutable, value-semantics, no boilerplate.
      409 (a retry then gets the precise answer via step 2) instead of
      surfacing a 500. Either way this attempt's balance changes roll back -
      the transfer applies at most once.
-  5. Register an `afterCommit` hook: evict both cached balances, publish
-     `TransferCompletedEvent`. Side-effects run only if the commit succeeded,
-     and the write transaction never blocks on Redis or RocketMQ.
+  5. Append a `TransferCompletedEvent` to the outbox (`TransferOutbox`) inside
+     the same transaction - the event commits iff the transfer does - and
+     register an `afterCommit` hook that evicts both cached balances. Nothing
+     publishes from the request path, and the write transaction never blocks
+     on Redis or RocketMQ; delivery is the relay's job.
 
   **`history(userId, page, size)`** (`@Transactional(readOnly = true)`) -
   clamps size to `MAX_PAGE_SIZE` (100) as a service-level backstop even though
@@ -175,9 +196,9 @@ All six are Java records: immutable, value-semantics, no boilerplate.
      sender, through the same `moveInLockOrder`. The conditional debit means
      a receiver who already spent the money yields `InsufficientFundsException`
      (409) and the whole cancel, including the status flip, rolls back.
-  4. Append the reversal row (`insertReversal`, linked via `reversal_of`) and
-     register the same afterCommit hook shape (evict both, publish
-     `TransferCancelledEvent`).
+  4. Append the reversal row (`insertReversal`, linked via `reversal_of`),
+     append the `TransferCancelledEvent` to the outbox in the same
+     transaction, and register the same afterCommit eviction hook.
 
   **The private helpers** encode the two core safety mechanisms:
   - `moveInLockOrder` touches the two account rows in ascending `userId`
@@ -223,6 +244,12 @@ correctness story lives in the exact SQL, so it is kept visible.
   `recordOnce` uses `INSERT IGNORE` against the `(event_type, transfer_id)`
   unique key, making consumer redelivery idempotent. `countByTransferId`
   exists for tests.
+- [`OutboxRepository`](../src/main/java/com/example/demo/repository/OutboxRepository.java) -
+  the four outbox primitives: `append` (joins the caller's transaction - the
+  point of the pattern), `findDue` (unpublished rows whose backoff has
+  elapsed, in id order), `markPublished`, and `markFailed` (increments
+  `attempts` and defers via `next_attempt_at` with a capped exponential
+  backoff computed in SQL).
 
 ### `cache/` - Redis, read path only
 
@@ -238,21 +265,35 @@ correctness story lives in the exact SQL, so it is kept visible.
     transfers (the afterCommit eviction threw).
   - The TTL bounds the staleness any missed eviction can cause.
 
-### `event/` - RocketMQ DTOs, publisher pair, consumer handler
+### `event/` - RocketMQ DTOs, transactional outbox, consumer handler
 
-- [`TransferEventPublisher`](../src/main/java/com/example/demo/event/TransferEventPublisher.java) -
-  the two-method interface the service depends on. The service never knows
-  whether messaging is on.
-- [`RocketMqTransferEventPublisher`](../src/main/java/com/example/demo/event/RocketMqTransferEventPublisher.java) -
-  active when `rocketmq.enabled=true`. Serializes the event with Jackson and
-  sends it to the configured topic with the event type as the message *tag*.
-  Best-effort by design: the transfer is already committed when this runs, so
-  a send failure is logged and swallowed (the production evolution is a
-  transactional outbox; see README "Known limits").
-- [`NoOpTransferEventPublisher`](../src/main/java/com/example/demo/event/NoOpTransferEventPublisher.java) -
-  active when messaging is off (`matchIfMissing = true`, so also the default).
-  Transfers work identically minus the message. This pair is why the test
-  suite runs without a broker.
+- [`TransferOutbox`](../src/main/java/com/example/demo/event/TransferOutbox.java) -
+  the request-path half of the outbox and the only messaging type the service
+  depends on: serializes the event with Jackson and appends it via
+  `OutboxRepository`, inside the business transaction. A serialization failure
+  fails the transaction (committing a transfer whose event can never be
+  delivered would silently break at-least-once).
+- [`OutboxRelay`](../src/main/java/com/example/demo/event/OutboxRelay.java) -
+  the delivery half: a `@Scheduled` poller (1s `fixedDelay`) that reads due
+  unpublished rows in id order, sends each through `OutboxMessageSender`, and
+  stamps `published_at`. A failed send defers only that row (`markFailed`:
+  attempts + capped exponential backoff), so a poisoned event cannot block
+  the queue. Its javadoc holds the scheduling/locking notes: `fixedDelay`
+  passes never overlap in one instance, multiple instances are safe because
+  the worst case is a duplicate send (idempotent consumer), and production
+  relay coordination would use `FOR UPDATE SKIP LOCKED` or ShedLock.
+- [`OutboxMessageSender`](../src/main/java/com/example/demo/event/OutboxMessageSender.java) -
+  the broker-facing seam: `send(eventType, payload)`, where throwing means
+  "not delivered, retry later". The pair mirrors the old publisher pair:
+  [`RocketMqOutboxSender`](../src/main/java/com/example/demo/event/RocketMqOutboxSender.java)
+  (active when `rocketmq.enabled=true`; sends to the configured topic with
+  the event type as the message *tag*, failures propagate to the relay) and
+  [`NoOpOutboxSender`](../src/main/java/com/example/demo/event/NoOpOutboxSender.java)
+  (`matchIfMissing = true`, so also the default: the relay drains the outbox
+  to nowhere). This seam is why the test suite runs without a broker.
+- [`OutboxEvent`](../src/main/java/com/example/demo/event/OutboxEvent.java) -
+  a pending outbox row as the relay sees it: id, event type, payload,
+  attempts.
 - [`TransferCompletedEvent`](../src/main/java/com/example/demo/event/TransferCompletedEvent.java) /
   [`TransferCancelledEvent`](../src/main/java/com/example/demo/event/TransferCancelledEvent.java) -
   message payload records. The cancelled event carries both the original
@@ -268,13 +309,17 @@ correctness story lives in the exact SQL, so it is kept visible.
 ### `config/`
 
 - [`RocketMqConfig`](../src/main/java/com/example/demo/config/RocketMqConfig.java) -
-  the only configuration class. Gated on
+  gated on
   `@ConditionalOnProperty("rocketmq.enabled")` so tests never start it. Wires
   the raw `DefaultMQProducer` (started/stopped via bean lifecycle) and a
   `DefaultMQPushConsumer` whose listener routes by message tag to the handler,
   returning `RECONSUME_LATER` on any exception so RocketMQ redelivers (which
   is safe, because the handler is idempotent). Producer group, consumer group,
   name server and topic all come from properties.
+- [`SchedulingConfig`](../src/main/java/com/example/demo/config/SchedulingConfig.java) -
+  turns on `@Scheduled` processing for the outbox relay. Gated on
+  `outbox.relay.enabled` (default on) so the integration suite can switch the
+  background poller off and drive relay passes deterministically.
 
 ### `exception/` - the error model
 
@@ -345,6 +390,9 @@ them are documented in the README's Test and CI sections).
 - `spring.datasource.*` - the compose MySQL (`taskdb`, `taskuser`), Hikari
   pool capped at 10.
 - `spring.data.redis.*` - the compose Redis.
+- `outbox.relay.*` - custom properties for the outbox relay: `enabled` (the
+  scheduler gate; tests turn it off and drive the relay by hand),
+  `poll-interval-ms` (1000), `batch-size` (100).
 - `rocketmq.*` - custom properties (the app uses the raw `rocketmq-client`,
   not the Spring Boot starter): `enabled` (the publisher/consumer gate),
   `name-server`, `producer.group`, `consumer.group`, `topic.transfer`.
@@ -402,14 +450,18 @@ surefire, `*IT` via failsafe).
 | [`TransferHistoryIT`](../src/test/java/com/example/demo/TransferHistoryIT.java) | IT | Newest-first ordering as sender or receiver, stable pagination, empty page, 400 on bad paging. |
 | [`UserEndpointIT`](../src/test/java/com/example/demo/UserEndpointIT.java) | IT | Create/balance happy paths, 409 duplicate, 404 unknown, 400 negative initial balance. |
 | [`BalanceCacheIT`](../src/test/java/com/example/demo/BalanceCacheIT.java) | IT | Cache-aside works: second read served from Redis without hitting MySQL; a transfer evicts. |
-| [`AuditIdempotencyIT`](../src/test/java/com/example/demo/AuditIdempotencyIT.java) | IT | Redelivering the same event to the handler writes exactly one audit row (no broker needed). |
+| [`AuditIdempotencyIT`](../src/test/java/com/example/demo/AuditIdempotencyIT.java) | IT | Redelivering the same event (completed or cancelled) to the handler writes exactly one audit row per event type - the consumer tolerates the relay's at-least-once duplicates (no broker needed). |
+| [`OutboxAtomicityIT`](../src/test/java/com/example/demo/OutboxAtomicityIT.java) | IT | The outbox write is atomic with the business transaction: a committed transfer/cancel leaves exactly one unpublished row, a failed transfer leaves none, a rolled-back transaction takes its row with it. |
+| [`OutboxRelayIT`](../src/test/java/com/example/demo/OutboxRelayIT.java) | IT | Against a spied sender (no broker): the relay publishes and marks each row exactly once; a failed publish defers the row with backoff (attempts incremented, not retried while deferred) and a later pass delivers it. |
+| [`OutboxRelaySchedulingIT`](../src/test/java/com/example/demo/OutboxRelaySchedulingIT.java) | IT | The `@Scheduled` wiring: with `outbox.relay.enabled` on, the background poller drains a committed row without a manual relay pass. |
 | [`ErrorModelIT`](../src/test/java/com/example/demo/ErrorModelIT.java) | IT | Malformed JSON (400), unsupported method (405) and unknown route (404) all come back in the `ApiError` shape. |
 | [`BalanceCacheTest`](../src/test/java/com/example/demo/cache/BalanceCacheTest.java) | unit | The fail-open contract: get degrades to a miss, put/evict swallow Redis failures, hits parse, an unparseable entry is evicted and treated as a miss. |
 | [`GlobalExceptionHandlerTest`](../src/test/java/com/example/demo/exception/GlobalExceptionHandlerTest.java) | unit | The catch-all keeps the `ApiError` shape for `ErrorResponse` exceptions: non-enum status codes fall back to 500, mandated headers (e.g. `Allow` on 405) survive. |
 | [`TransferEventHandlerTest`](../src/test/java/com/example/demo/event/TransferEventHandlerTest.java) | unit | Handler records audit (cancelled events keyed on the original id) and evicts both balances. |
-| [`RocketMqTransferEventPublisherTest`](../src/test/java/com/example/demo/event/RocketMqTransferEventPublisherTest.java) | unit | The publisher serializes the event and targets the configured topic. |
+| [`TransferOutboxTest`](../src/test/java/com/example/demo/event/TransferOutboxTest.java) | unit | The appender writes the right event type + JSON payload, and a serialization failure fails the transaction instead of committing silently. |
+| [`RocketMqOutboxSenderTest`](../src/test/java/com/example/demo/event/RocketMqOutboxSenderTest.java) | unit | The sender targets the configured topic with the event type as tag and the payload as body, and propagates broker failures to the relay. |
 | [`DemoApplicationTests`](../src/test/java/com/example/demo/DemoApplicationTests.java) | unit | The Spring context wires up (smoke). |
-| [`RocketMqSmokeIT`](../src/test/java/com/example/demo/RocketMqSmokeIT.java) | IT, opt-in | The true end-to-end broker path: a live transfer publishes through the compose broker and the push consumer writes the `audit_log` row. Opt-in via `ROCKETMQ_SMOKE=true` (slow: first-run topic-route propagation); skipped in the default suite, where the logic is covered by the handler unit test + `AuditIdempotencyIT`. |
+| [`RocketMqSmokeIT`](../src/test/java/com/example/demo/RocketMqSmokeIT.java) | IT, opt-in | The true end-to-end broker path: a live transfer writes an outbox row, the relay publishes it through the compose broker, and the push consumer writes the `audit_log` row. Opt-in via `ROCKETMQ_SMOKE=true` (slow: first-run topic-route propagation); skipped in the default suite, where the pieces are covered by `OutboxRelayIT`, the handler unit test and `AuditIdempotencyIT`. |
 
 ## The five invariants to hold in your head
 
@@ -424,5 +476,6 @@ If you remember nothing else, remember these; every file above serves one:
 4. **History is append-only**; cancel compensates with a reversal row, never
    an update-in-place of balances or a delete.
 5. **Redis and RocketMQ are helpers, never authorities**: cache is fail-open
-   and TTL-bounded, events are after-commit and best-effort, the consumer is
-   idempotent because delivery is at-least-once.
+   and TTL-bounded, events commit with the transfer in the transactional
+   outbox and are relayed at-least-once, the consumer is idempotent because
+   duplicates are the price of never losing an event.

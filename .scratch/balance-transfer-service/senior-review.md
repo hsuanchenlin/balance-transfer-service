@@ -124,6 +124,9 @@ design.
   Known cache-aside limitation; TTL bounds it. Worth one README sentence.
 - **Best-effort event publish**: a crash between commit and publish loses the event;
   the transactional-outbox evolution is already noted in code and README.
+  -> Status: RESOLVED 2026-07-15 - implemented as a transactional outbox
+  (`outbox_event` + `OutboxRelay`); the remaining evolution in the README's
+  known-limits section is now relay coordination/CDC. See PROGRESS.md.
 - **Offset pagination** drift under concurrent inserts; keyset noted as evolution.
 - **`exists()` via COUNT(*)**: `SELECT 1 ... LIMIT 1` is marginally cheaper; not worth
   the churn.

@@ -1,6 +1,6 @@
 # Balance Transfer Service — Progress & Handoff
 
-_Last updated: 2026-07-14. Resume point for a fresh Claude Code CLI session._
+_Last updated: 2026-07-15. Resume point for a fresh Claude Code CLI session._
 
 A RESTful balance-transfer service (Spring Boot 3 / Java 21, MySQL + Redis + RocketMQ), built from a homework skeleton with a spec → ADRs → tickets → TDD workflow.
 
@@ -20,7 +20,7 @@ A RESTful balance-transfer service (Spring Boot 3 / Java 21, MySQL + Redis + Roc
 
 All five assignment endpoints are implemented; README/HELP/curl submission docs are written.
 
-**Tests:** 49 pass + 1 documented skip via `mvn verify` (surefire 11 unit + failsafe 39 IT).
+**Tests:** 62 pass + 1 documented skip via `mvn verify` (surefire 15 unit + failsafe 48 IT).
 **Git:** **PR #1** (https://github.com/hsuanchenlin/balance-transfer-service/pull/1) was **merged into `main`** on 2026-07-13 (merge commit `b986e50`). All work from branch `balance-transfer-service` (tickets 01–09, including history + cancel + submission docs and the `markCancelled` reversal-row regression fix) has fully landed on `main`. New work starts on a fresh branch/PR off `main`.
 
 ## How to run
@@ -41,12 +41,12 @@ Package layout under `src/main/java/com/example/demo/`:
 
 - `controller/` — REST + DTO validation (`UserController`, `TransferController`)
 - `service/` — business logic + `@Transactional` (`UserService`, `TransferService`)
-- `repository/` — `JdbcClient` SQL (`AccountRepository`, `TransferRepository`, `AuditRepository`)
+- `repository/` — `JdbcClient` SQL (`AccountRepository`, `TransferRepository`, `AuditRepository`, `OutboxRepository`)
 - `model/` — request/response records
 - `exception/` — domain exceptions + `GlobalExceptionHandler` (`@RestControllerAdvice`, `ApiError` body `{timestamp,status,error,message,path}`)
 - `cache/` — `BalanceCache` (Redis cache-aside, keys `balance:<userId>`, 5-min TTL)
-- `event/` — RocketMQ DTO, publisher (real + no-op), consumer handler
-- `config/` — `RocketMqConfig` (producer + push consumer, gated on `rocketmq.enabled`)
+- `event/` — RocketMQ DTOs, transactional outbox (`TransferOutbox` appender, `OutboxRelay` poller, `OutboxMessageSender` real/no-op pair), consumer handler
+- `config/` — `RocketMqConfig` (producer + push consumer, gated on `rocketmq.enabled`), `SchedulingConfig` (relay scheduler, gated on `outbox.relay.enabled`)
 
 Design canon (READ THESE before changing behavior):
 - `CONTEXT.md` — domain glossary (ubiquitous language)
@@ -60,12 +60,12 @@ Design canon (READ THESE before changing behavior):
 - **Transfer safety (ADR-0001):** one `@Transactional` doing an atomic conditional debit `UPDATE account SET balance = balance - :amt WHERE user_id = :from AND balance >= :amt` (0 rows → `409`), with the two account rows touched in **ascending-userId order** to avoid deadlocks. Proven by `TransferConcurrencyIT`.
 - **Idempotency:** optional `requestId` under a `UNIQUE` constraint; sequential retry with the same payload replays the original, a reused key with a different payload is rejected with `422`, concurrent duplicate rolls back → applies at most once.
 - **Redis:** read-path cache only; invalidated in an `afterCommit` hook.
-- **RocketMQ:** transfer publishes `TransferCompletedEvent` afterCommit (best-effort); consumer writes an idempotent `audit_log` row + invalidates cache.
+- **RocketMQ:** transfer appends `TransferCompletedEvent` to the `outbox_event` table inside the money transaction (transactional outbox); the scheduled `OutboxRelay` publishes it at-least-once; consumer writes an idempotent `audit_log` row + invalidates cache.
 
 ## ⚠️ Environment gotchas (important)
 
 1. **Testcontainers vs Docker Engine 29** - RESOLVED. Integration tests now run on Testcontainers-managed MySQL (seeded with the same repo-root `init.sql` as compose) and Redis, started once per JVM by `AbstractIntegrationTest`; `./mvnw verify` needs only a Docker daemon, not the compose stack. Root cause of the old failure: Docker Engine 29+ rejects Docker API versions below 1.44 with HTTP 400 (verified: `/v1.32/info` → 400, `/v1.44/info` → 200 on this engine), and the docker-java bundled with Testcontainers 1.21.x (docker-java 3.4.2, even in 1.21.3, the latest) still handshakes with 1.32. Fix: the base class pins the docker-java system property `api.version=1.44` in a static block (respecting an external override). Drop that pin once the bundled docker-java catches up.
-2. **RocketMQ from the host** - RESOLVED. `broker.conf` sets `brokerIP1=127.0.0.1` (host-reachable) and `timerWheelEnable=false` (the unused 5.x timer-wheel store makes boot pathologically slow under qemu emulation on Apple Silicon). Gotcha within the gotcha: compose bind-mounts `broker.conf` as a single file and Docker for Mac tracks the *inode*, so after editing it you must `docker compose up -d --force-recreate rocketmq-broker` - a plain restart serves the stale pre-edit content (exactly why the original `brokerIP1` fix silently never took effect). Tests keep RocketMQ **off** via `rocketmq.enabled=false` (see `AbstractIntegrationTest` and `DemoApplicationTests`); the end-to-end `RocketMqSmokeIT` is now a real test, opt-in via `ROCKETMQ_SMOKE=true ./mvnw -Dit.test=RocketMqSmokeIT verify` (verified green: transfer → broker → push consumer → `audit_log` row, ~33s). The real app defaults `rocketmq.enabled=true`.
+2. **RocketMQ from the host** - RESOLVED. `broker.conf` sets `brokerIP1=127.0.0.1` (host-reachable) and `timerWheelEnable=false` (the unused 5.x timer-wheel store makes boot pathologically slow under qemu emulation on Apple Silicon). Gotcha within the gotcha: compose bind-mounts `broker.conf` as a single file and Docker for Mac tracks the *inode*, so after editing it you must `docker compose up -d --force-recreate rocketmq-broker` - a plain restart serves the stale pre-edit content (exactly why the original `brokerIP1` fix silently never took effect). Tests keep RocketMQ **off** via `rocketmq.enabled=false` (see `AbstractIntegrationTest` and `DemoApplicationTests`); the end-to-end `RocketMqSmokeIT` is now a real test, opt-in via `ROCKETMQ_SMOKE=true ./mvnw -Dit.test=RocketMqSmokeIT verify` (transfer → outbox relay → broker → push consumer → `audit_log` row; verified green pre-outbox at ~33s). The real app defaults `rocketmq.enabled=true`.
 
 ## What was delivered for 07–09
 
@@ -83,13 +83,14 @@ A staff-level review of the whole codebase lives in `.scratch/balance-transfer-s
 - **Defensive credit:** `TransferService` throws if a credit touches 0 rows instead of silently dropping money (unreachable today, invariant for future refactors).
 - **Idempotency payload validation:** replaying a `requestId` with different parties or amount is rejected with `422` (`IdempotencyConflictException`) instead of silently returning the original result - Stripe's idempotency-key contract (`TransferIdempotencyIT`).
 - **Config symmetry:** the RocketMQ consumer group now comes from `rocketmq.consumer.group` in `application.yaml` instead of a hardcoded string, mirroring the producer group.
-- **Documented limits:** new README section "Known limits and scale evolutions" (history OR-query vs UNION ALL + keyset, offset-paging drift, cache-aside stale-read window, best-effort publish vs outbox), closing the last review-backlog items.
+- **Documented limits:** new README section "Known limits and scale evolutions" (history OR-query vs UNION ALL + keyset, offset-paging drift, cache-aside stale-read window, relay coordination/CDC), closing the last review-backlog items.
+- **Transactional outbox (2026-07-15):** replaced the best-effort after-commit publish with a transactional outbox - `outbox_event` row written inside the money transaction (`TransferOutbox`), delivered at-least-once by the scheduled `OutboxRelay` (1s poll, capped exponential backoff per row, gated on `outbox.relay.enabled`); the old publisher pair is gone and nothing publishes from the request path. Proven by `OutboxAtomicityIT`, `OutboxRelayIT` (spied sender, broker-free), `OutboxRelaySchedulingIT`, and the extended `AuditIdempotencyIT`.
 - **Interview prep:** `docs/interview-qa.md` - code walkthrough + answers to the 15 design questions an interviewer would ask.
 - **Full comprehension guide:** `docs/code-walkthrough.md` - exhaustive file-by-file walkthrough (every class, schema column by column, config keys, and what each test class proves), for understanding every single piece of the code.
 - **Postman collection:** `scripts/balance-transfer.postman_collection.json` - the curl walkthrough as a runnable collection with per-request assertions (21 requests, 30 assertions); verified green with `npx newman run` against the live app.
 - **Dependency hygiene:** removed the baseline skeleton's `dependencyManagement` block that force-downgraded RocketMQ's transitive gRPC to 1.33.0 (2020, CVE-carrying Netty bundle); gRPC now resolves to 1.53.0, the version `rocketmq-client` 5.3.2 itself manages. Verified via `dependency:tree`, full suite, and a live boot + transfer with RocketMQ enabled.
 - **Self-contained test suite:** `AbstractIntegrationTest` now starts its own Testcontainers MySQL (seeded with `init.sql`) and Redis instead of pointing at the compose stack, so `./mvnw verify` runs anywhere with a Docker daemon (verified green with the compose MySQL/Redis stopped). Unblocked by diagnosing the Docker 29 gotcha: the engine 400s Docker API handshakes below 1.44, fixed by pinning docker-java's `api.version=1.44` (see gotcha 1).
-- **RocketMQ pipeline verified end-to-end:** `RocketMqSmokeIT` is now a real opt-in test (`ROCKETMQ_SMOKE=true`) proving transfer → broker → push consumer → `audit_log` row against the compose stack, green in ~33s. Unblocked by fixing the broker environment (see gotcha 2): the stale single-file bind mount meant `brokerIP1` had never taken effect, and the unused timer-wheel store made emulated boots hang, now `timerWheelEnable=false`. Also fixed the namesrv compose healthcheck (it probed HTTP against the binary remoting port and reported `unhealthy` forever; now a bash-free LISTEN-socket probe, see the comment in `docker-compose.yaml`, and the container reports `healthy`).
+- **RocketMQ pipeline verified end-to-end:** `RocketMqSmokeIT` is now a real opt-in test (`ROCKETMQ_SMOKE=true`) proving transfer → outbox relay → broker → push consumer → `audit_log` row against the compose stack (green in ~33s pre-outbox). Unblocked by fixing the broker environment (see gotcha 2): the stale single-file bind mount meant `brokerIP1` had never taken effect, and the unused timer-wheel store made emulated boots hang, now `timerWheelEnable=false`. Also fixed the namesrv compose healthcheck (it probed HTTP against the binary remoting port and reported `unhealthy` forever; now a bash-free LISTEN-socket probe, see the comment in `docker-compose.yaml`, and the container reports `healthy`).
 
 ## To continue (workflow for future changes)
 

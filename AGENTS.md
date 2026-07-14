@@ -15,7 +15,7 @@ Environment gotchas that will bite you if unread (details in PROGRESS.md):
 Design canon to respect: `CONTEXT.md` (glossary), `docs/adr/*` (ADR-0001 DB-as-authority, ADR-0002 cancel-as-compensation), and `.scratch/balance-transfer-service/` (spec + `issues/NN-*.md` tickets). All nine tickets are implemented; the assignment is feature-complete.
 
 ## Layout
-- `src/main/java/com/example/demo/` — `controller/` (REST), `service/` (business logic), `repository/` (data access), `model/` (entities/DTOs), `cache/` (Redis cache-aside), `event/` (RocketMQ DTOs, publisher, consumer handler), `config/` (beans)
+- `src/main/java/com/example/demo/` — `controller/` (REST), `service/` (business logic), `repository/` (data access), `model/` (entities/DTOs), `cache/` (Redis cache-aside), `event/` (RocketMQ DTOs, transactional outbox appender/relay/senders, consumer handler), `config/` (beans)
 - `src/main/resources/` — `application.*` config
 - `src/test/java/com/example/demo/` — tests
 - `docker-compose.yaml` — MySQL, Redis, RocketMQ (namesrv/broker/console)

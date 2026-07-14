@@ -14,7 +14,7 @@ import com.example.demo.model.TransferResponse;
 import com.example.demo.cache.BalanceCache;
 import com.example.demo.event.TransferCancelledEvent;
 import com.example.demo.event.TransferCompletedEvent;
-import com.example.demo.event.TransferEventPublisher;
+import com.example.demo.event.TransferOutbox;
 import com.example.demo.repository.AccountRepository;
 import com.example.demo.repository.TransferRepository;
 import org.springframework.dao.ConcurrencyFailureException;
@@ -37,14 +37,14 @@ public class TransferService {
     private final AccountRepository accounts;
     private final TransferRepository transfers;
     private final BalanceCache balanceCache;
-    private final TransferEventPublisher eventPublisher;
+    private final TransferOutbox outbox;
 
     public TransferService(AccountRepository accounts, TransferRepository transfers,
-                           BalanceCache balanceCache, TransferEventPublisher eventPublisher) {
+                           BalanceCache balanceCache, TransferOutbox outbox) {
         this.accounts = accounts;
         this.transfers = transfers;
         this.balanceCache = balanceCache;
-        this.eventPublisher = eventPublisher;
+        this.outbox = outbox;
     }
 
     /**
@@ -123,14 +123,15 @@ public class TransferService {
             }
             throw new DuplicateRequestException(requestId);
         }
-        // Run side-effects only after the DB commit: invalidate the read-path cache
-        // (so a concurrent read can't repopulate it with uncommitted balances) and
-        // publish the event. The write transaction never blocks on message delivery.
-        TransferCompletedEvent event = new TransferCompletedEvent(transferId, from, to, request.amount());
+        // Record the audit event in the transactional outbox - same transaction as
+        // the money movement, so the event exists iff the transfer committed; the
+        // relay delivers it to RocketMQ after commit (at-least-once). Only the cache
+        // invalidation stays after commit, so a concurrent read can't repopulate the
+        // cache with balances the transaction might still roll back.
+        outbox.appendCompleted(new TransferCompletedEvent(transferId, from, to, request.amount()));
         afterCommit(() -> {
             balanceCache.evict(from);
             balanceCache.evict(to);
-            eventPublisher.publishCompleted(event);
         });
         return new TransferResponse(transferId, "COMPLETED");
     }
@@ -189,12 +190,13 @@ public class TransferService {
         moveInLockOrder(receiver, sender, amount);
         long reversalId = transfers.insertReversal(receiver, sender, amount, transferId);
 
-        TransferCancelledEvent event =
-                new TransferCancelledEvent(transferId, reversalId, sender, receiver, amount);
+        // Same outbox discipline as transfer(): the cancelled event commits with the
+        // reversal; cache eviction is the only after-commit side-effect.
+        outbox.appendCancelled(
+                new TransferCancelledEvent(transferId, reversalId, sender, receiver, amount));
         afterCommit(() -> {
             balanceCache.evict(sender);
             balanceCache.evict(receiver);
-            eventPublisher.publishCancelled(event);
         });
         return new TransferResponse(transferId, "CANCELLED");
     }
