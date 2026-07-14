@@ -85,16 +85,22 @@ class TransferConservationStressIT extends AbstractIntegrationTest {
     private void runStorm(ExecutorService pool, CountDownLatch start, CountDownLatch done)
             throws InterruptedException {
         start.countDown();
-        boolean finished = done.await(AWAIT_SECONDS, TimeUnit.SECONDS);
-        assertThat(finished)
-                .as("storm did not finish within %ds - %d task(s) still outstanding "
-                        + "(possible deadlock or connection-pool starvation)",
-                        AWAIT_SECONDS, done.getCount())
-                .isTrue();
-        pool.shutdown();
-        assertThat(pool.awaitTermination(10, TimeUnit.SECONDS))
-                .as("executor did not terminate after the storm completed")
-                .isTrue();
+        try {
+            boolean finished = done.await(AWAIT_SECONDS, TimeUnit.SECONDS);
+            assertThat(finished)
+                    .as("storm did not finish within %ds - %d task(s) still outstanding "
+                            + "(possible deadlock or connection-pool starvation)",
+                            AWAIT_SECONDS, done.getCount())
+                    .isTrue();
+            pool.shutdown();
+            assertThat(pool.awaitTermination(10, TimeUnit.SECONDS))
+                    .as("executor did not terminate after the storm completed")
+                    .isTrue();
+        } finally {
+            if (!pool.isTerminated()) {
+                pool.shutdownNow();
+            }
+        }
     }
 
     @Test
