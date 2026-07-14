@@ -57,12 +57,14 @@ public class OutboxRepository {
     /**
      * Records a failed publish: bump {@code attempts} and defer the row with a
      * capped exponential backoff. MySQL applies SET clauses left to right, so the
-     * {@code POW(2, attempts)} below sees the already-incremented value: the row is
-     * retried after 2s, 4s, 8s, ... capped at 60s.
+     * {@code POW} below sees the already-incremented value: the row is retried
+     * after 2s, 4s, 8s, ... capped at 60s. The exponent itself is capped (at 6,
+     * where the 60s ceiling is already reached) so {@code attempts} can grow
+     * without bound while {@code POW} can never overflow MySQL's DOUBLE.
      */
     public void markFailed(long id) {
         jdbc.sql("UPDATE outbox_event SET attempts = attempts + 1, "
-                        + "next_attempt_at = TIMESTAMPADD(SECOND, LEAST(POW(2, attempts), 60), NOW()) "
+                        + "next_attempt_at = TIMESTAMPADD(SECOND, LEAST(POW(2, LEAST(attempts, 6)), 60), NOW()) "
                         + "WHERE id = :id")
                 .param("id", id)
                 .update();
