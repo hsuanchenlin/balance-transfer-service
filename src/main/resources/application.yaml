@@ -22,5 +22,7 @@ rocketmq:
   name-server: localhost:9876
   producer:
     group: balance-transfer-producer
+  consumer:
+    group: balance-transfer-consumer
   topic:
     transfer: transfer-events

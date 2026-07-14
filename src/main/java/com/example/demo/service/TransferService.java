@@ -2,6 +2,7 @@ package com.example.demo.service;
 
 import com.example.demo.exception.CancellationNotAllowedException;
 import com.example.demo.exception.DuplicateRequestException;
+import com.example.demo.exception.IdempotencyConflictException;
 import com.example.demo.exception.InsufficientFundsException;
 import com.example.demo.exception.SelfTransferException;
 import com.example.demo.exception.TransferNotFoundException;
@@ -53,9 +54,11 @@ public class TransferService {
      * transfers.
      *
      * <p>When a {@code requestId} is supplied it is stored under a UNIQUE
-     * constraint, making the operation idempotent: a sequential retry replays the
-     * original result; a concurrent duplicate is rejected (rolling back its
-     * attempt) so the transfer applies at most once.
+     * constraint, making the operation idempotent: a sequential retry with the
+     * same payload replays the original result, a retry with a different payload
+     * is rejected with {@link IdempotencyConflictException} (422), and a
+     * concurrent duplicate is rejected (rolling back its attempt) so the
+     * transfer applies at most once.
      */
     @Transactional
     public TransferResponse transfer(TransferRequest request) {
@@ -73,11 +76,21 @@ public class TransferService {
             throw new UserNotFoundException(to);
         }
 
-        // Idempotency replay: a completed transfer already exists for this key.
+        // Idempotency replay: a transfer already exists for this key. Replay only
+        // if the retry carries the same payload; a reused key with different
+        // parties or amount is a client bug, not a retry - reject it (422) rather
+        // than silently answering a question the client did not ask.
         if (requestId != null) {
-            Optional<TransferResponse> existing = transfers.findByRequestId(requestId);
+            Optional<TransferHistoryItem> existing = transfers.findByRequestId(requestId);
             if (existing.isPresent()) {
-                return existing.get();
+                TransferHistoryItem original = existing.get();
+                boolean samePayload = original.fromUserId().equals(from)
+                        && original.toUserId().equals(to)
+                        && original.amount().compareTo(request.amount()) == 0;
+                if (!samePayload) {
+                    throw new IdempotencyConflictException(requestId);
+                }
+                return new TransferResponse(original.id(), original.status());
             }
         }
 
@@ -177,9 +190,9 @@ public class TransferService {
     private void moveInLockOrder(String from, String to, BigDecimal amount) {
         if (from.compareTo(to) < 0) {
             debitOrThrow(from, amount);
-            accounts.credit(to, amount);
+            creditOrThrow(to, amount);
         } else {
-            accounts.credit(to, amount);
+            creditOrThrow(to, amount);
             debitOrThrow(from, amount);
         }
     }
@@ -188,6 +201,19 @@ public class TransferService {
         int rows = accounts.debit(user, amount);
         if (rows == 0) {
             throw new InsufficientFundsException(user);
+        }
+    }
+
+    /**
+     * A credit that touches 0 rows means the account vanished mid-transaction.
+     * Unreachable today (existence is checked upfront and accounts are never
+     * deleted), but the money path must fail loudly - never drop a credit -
+     * so the invariant survives future refactors.
+     */
+    private void creditOrThrow(String user, BigDecimal amount) {
+        int rows = accounts.credit(user, amount);
+        if (rows == 0) {
+            throw new IllegalStateException("Credit applied to missing account: " + user);
         }
     }
 

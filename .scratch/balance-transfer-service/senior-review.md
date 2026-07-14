@@ -1,0 +1,138 @@
+# Senior-staff code review - findings and optimization backlog
+
+Status: in-progress (worked through across gnhf iterations)
+Created: 2026-07-13
+Feature: balance-transfer-service
+
+Scope reviewed: all of `src/main/java`, `init.sql`, `application.yaml`, test suite,
+docs (README/HELP/ADRs/spec). Overall verdict: the load-bearing design is correct
+and well-argued (ADR-0001 atomic conditional update + deterministic lock order,
+ADR-0002 compensating reversal, idempotency via UNIQUE key). The findings below
+are robustness/consistency/performance refinements, prioritized.
+
+## P1 - fix now
+
+1. **Redis cache is not fail-open.** `BalanceCache.get/put/evict` let
+   `DataAccessException` propagate. Consequences when Redis is down or flaky:
+   - `GET /users/{id}/balance` returns 500 even though MySQL (the authority) is fine.
+   - A transfer/cancel that has already COMMITTED returns 500, because the
+     afterCommit hook evicts the cache before publishing; the client sees an error
+     for money that moved. The RocketMQ publish is also skipped (evict throws first).
+   Fix: catch `DataAccessException` inside `BalanceCache`, log a warning, and degrade
+   (miss on get, no-op on put/evict). TTL already bounds staleness from a missed
+   eviction (documented self-heal). Verify with a unit test using a mocked
+   `StringRedisTemplate`.
+   -> Status: FIXED in iteration 1 (`BalanceCacheTest`).
+
+## P2 - next iterations (each is one small, testable unit)
+
+2. **Error-model consistency gaps.** Malformed JSON (`HttpMessageNotReadableException`)
+   and any unhandled exception (500) fall through to Spring's default error body, not
+   the documented `ApiError` shape `{timestamp,status,error,message,path}`. Add a
+   handler for unreadable bodies (400) and a catch-all (500, generic message, log the
+   stack). Test: POST invalid JSON to `/transfers`, assert ApiError shape.
+   -> Status: FIXED in iteration 1 (`ErrorModelIT`).
+
+3. **Defensive credit check.** `AccountRepository.credit()` returns rows-affected but
+   `TransferService.moveInLockOrder` ignores it. Today a 0-row credit is unreachable
+   (exists-check upfront, FKs on transfer, no account deletion), but the money path
+   should be self-defending: `if (rows == 0) throw new IllegalStateException(...)`.
+   Cheap invariant, protects future refactors.
+   -> Status: FIXED in iteration 1 (creditOrThrow in TransferService).
+
+4. **Idempotency replay does not validate the payload.** Reusing a `requestId` with a
+   *different* amount/parties silently returns the original transfer's result. Industry
+   practice (e.g. Stripe) rejects the mismatch (409/422). Decide: implement the
+   comparison on replay, or document the current contract in README. Either is
+   defensible for the homework; silence is not.
+   -> Status: FIXED in iteration 2 - replay now compares from/to/amount
+   (compareTo, scale-insensitive) and rejects mismatches with 422
+   (`IdempotencyConflictException`); three new tests in `TransferIdempotencyIT`.
+
+5. **RocketMQ consumer group is hardcoded** (`"balance-transfer-consumer"` in
+   `RocketMqConfig`) while the producer group comes from yaml. Move to
+   `rocketmq.consumer.group` for symmetry.
+   -> Status: FIXED in iteration 3 - consumer group now injected from
+   `rocketmq.consumer.group` in `application.yaml`, mirroring the producer.
+
+6. **History query scalability.** `WHERE from_user_id = :u OR to_user_id = :u` defeats
+   single-column indexes (index-merge at best); `countByUser` repeats the scan every
+   page. Fine at homework scale; the senior move is either a `UNION ALL` rewrite over
+   the two indexes or an explicit README note that keyset pagination + UNION is the
+   scale evolution (spec already lists keyset as out of scope). Prefer the README note
+   unless benchmarks justify the rewrite.
+   -> Status: DOCUMENTED in iteration 3 (README note chosen, per the recommendation
+   above) - new README section "Known limits and scale evolutions" plus a javadoc
+   pointer on `TransferRepository.listByUser`.
+
+7. **Stale gRPC pin in `pom.xml`.** The baseline skeleton's `dependencyManagement`
+   block force-downgraded the gRPC artifacts that `rocketmq-client` 5.3.2 pulls in
+   transitively to 1.33.0 (October 2020) - `grpc-netty-shaded` at that version
+   bundles a Netty with multiple known CVEs. Nothing in the app declares gRPC
+   directly, so the pin had no purpose beyond overriding upstream's tested version.
+   -> Status: FIXED in iteration 6 - block removed; gRPC now resolves to 1.53.0,
+   the version RocketMQ 5.3.2 itself manages. Verified by `dependency:tree`, the
+   full suite (42 pass + 1 skip), and a live boot with `rocketmq.enabled=true`
+   plus a real transfer (the pre-existing host-to-broker publish timeout was
+   reproduced identically on the old pin, ruling out a regression).
+
+8. **Broken dev-stack plumbing (compose + broker.conf), found in iteration 7.**
+   Three related defects in the never-reviewed infra files:
+   (a) the namesrv healthcheck probed HTTP against the binary remoting port, so
+   the container reported `unhealthy` forever (and any
+   `depends_on: condition: service_healthy` would never fire);
+   (b) `brokerIP1 = 127.0.0.1` had silently never taken effect - the compose
+   single-file bind mount serves the file by inode on Docker for Mac, and the
+   broker container predated the edit, so the broker still advertised its
+   container-internal IP (the root cause of every "broker not host-reachable"
+   symptom in prior iterations);
+   (c) the unused RocketMQ 5.x timer-wheel store made emulated (qemu x86 on
+   Apple Silicon) broker boots spin at 200% CPU for 20+ minutes.
+   -> Status: FIXED in iteration 7 - TCP healthcheck (container now `healthy`),
+   broker recreated so `brokerIP1` is live (boot log: `broker[broker-a,
+   127.0.0.1:10911] boot success`), `timerWheelEnable = false` (boot in ~30s),
+   and the obsolete compose `version:` key removed. Proven by turning
+   `RocketMqSmokeIT` from a `@Disabled` placeholder into a real opt-in E2E test
+   (`ROCKETMQ_SMOKE=true`): transfer -> broker -> push consumer -> `audit_log`
+   row, green in 33s; default suite unchanged at 42 pass + 1 skip.
+
+9. **Test suite depended on the compose stack (Testcontainers "impossible"),
+   revisited in iteration 8.** The documented blocker turned out to be a
+   pinnable handshake problem, not an incompatibility: Docker Engine 29+
+   rejects Docker API versions below 1.44 with HTTP 400 (probed directly:
+   `/v1.32/info` -> 400, `/v1.44/info` -> 200), and the docker-java bundled
+   with every available Testcontainers release (3.4.2, even in 1.21.3) still
+   handshakes with 1.32. Meanwhile every IT required `docker compose up -d`
+   and a hand-managed shared MySQL/Redis - a hidden prerequisite and a
+   portability smell for a homework submission that reviewers will build.
+   -> Status: FIXED in iteration 8 - `AbstractIntegrationTest` pins
+   docker-java's `api.version=1.44` system property (respecting an external
+   override) and starts singleton Testcontainers MySQL (seeded with the
+   repo-root `init.sql`, same as compose) + Redis, rewired via
+   `@DynamicPropertySource`. Proven by running the full suite with the compose
+   MySQL/Redis containers stopped: 42 pass + 1 skip, and the opt-in
+   `RocketMqSmokeIT` still green against the compose broker (18.5s).
+
+## P3 - accepted tradeoffs (document, don't change)
+
+-> Status: DOCUMENTED in iteration 3 - the first three now live in the README
+section "Known limits and scale evolutions"; the `exists()` item stays as-is by
+design.
+
+- **Cache-aside stale-write race**: `getBalance` reads DB then `put`s; a transfer
+  committing between the two can leave a stale cache entry until the 5-min TTL.
+  Known cache-aside limitation; TTL bounds it. Worth one README sentence.
+- **Best-effort event publish**: a crash between commit and publish loses the event;
+  the transactional-outbox evolution is already noted in code and README.
+- **Offset pagination** drift under concurrent inserts; keyset noted as evolution.
+- **`exists()` via COUNT(*)**: `SELECT 1 ... LIMIT 1` is marginally cheaper; not worth
+  the churn.
+
+## Roadmap for remaining objective work
+
+- Iteration 2+: work through P2 items top-down, one per iteration, test-first.
+- Comprehension deliverable: a code walkthrough + interviewer Q&A doc
+  (`docs/interview-qa.md`) covering every design question a reviewer would ask:
+  why no Redis lock, deadlock avoidance, idempotency races, cache consistency,
+  cancel-as-compensation, why JdbcClient over JPA, testing strategy.
+  -> Status: DONE in iteration 1 (`docs/interview-qa.md`).

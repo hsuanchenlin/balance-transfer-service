@@ -1,0 +1,581 @@
+{
+  "info": {
+    "name": "Balance Transfer Service",
+    "description": "End-to-end walkthrough of the Balance Transfer Service API: all five endpoints plus the notable error cases (400 / 404 / 409 / 422). Mirrors scripts/curl-samples.sh.\n\nPrereqs: docker compose up -d && ./mvnw spring-boot:run (app on :8080).\n\nRun the whole collection in order (Collection Runner or newman); the first request generates fresh unique user ids so re-runs never collide on the UNIQUE userId constraint. Requests build on each other (the cancel folder cancels a transfer created earlier), so order matters.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "alice", "value": "" },
+    { "key": "bob", "value": "" },
+    { "key": "requestId", "value": "" },
+    { "key": "idempotentTransferId", "value": "" },
+    { "key": "cancelTransferId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Users",
+      "item": [
+        {
+          "name": "Create user Alice",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Fresh ids per run so re-running never collides on the UNIQUE userId.",
+                  "const suffix = Date.now().toString();",
+                  "pm.collectionVariables.set('alice', 'alice_' + suffix);",
+                  "pm.collectionVariables.set('bob', 'bob_' + suffix);",
+                  "pm.collectionVariables.set('requestId', 'req-' + suffix);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{alice}}\",\n  \"initialBalance\": 1000\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/users", "host": ["{{baseUrl}}"], "path": ["users"] }
+          }
+        },
+        {
+          "name": "Create user Bob",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{bob}}\",\n  \"initialBalance\": 0\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/users", "host": ["{{baseUrl}}"], "path": ["users"] }
+          }
+        },
+        {
+          "name": "Duplicate userId -> 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', () => pm.response.to.have.status(409));",
+                  "pm.test('ApiError shape', () => {",
+                  "    const b = pm.response.json();",
+                  "    pm.expect(b).to.have.keys('timestamp', 'status', 'error', 'message', 'path');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{alice}}\",\n  \"initialBalance\": 50\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/users", "host": ["{{baseUrl}}"], "path": ["users"] }
+          }
+        },
+        {
+          "name": "Negative initial balance -> 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"neg_{{alice}}\",\n  \"initialBalance\": -5\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/users", "host": ["{{baseUrl}}"], "path": ["users"] }
+          }
+        },
+        {
+          "name": "Get balance",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('balance is 1000', () => {",
+                  "    const b = pm.response.json();",
+                  "    pm.expect(b.userId).to.eql(pm.collectionVariables.get('alice'));",
+                  "    pm.expect(Number(b.balance)).to.eql(1000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/users/{{alice}}/balance",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "{{alice}}", "balance"]
+            }
+          }
+        },
+        {
+          "name": "Unknown user balance -> 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/users/ghost_{{alice}}/balance",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "ghost_{{alice}}", "balance"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Transfers",
+      "item": [
+        {
+          "name": "Transfer 150 Alice -> Bob",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('COMPLETED with a transferId', () => {",
+                  "    const b = pm.response.json();",
+                  "    pm.expect(b.status).to.eql('COMPLETED');",
+                  "    pm.expect(b.transferId).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fromUserId\": \"{{alice}}\",\n  \"toUserId\": \"{{bob}}\",\n  \"amount\": 150\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/transfers", "host": ["{{baseUrl}}"], "path": ["transfers"] }
+          }
+        },
+        {
+          "name": "Idempotent transfer (requestId)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('idempotentTransferId', String(pm.response.json().transferId));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fromUserId\": \"{{alice}}\",\n  \"toUserId\": \"{{bob}}\",\n  \"amount\": 25,\n  \"requestId\": \"{{requestId}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/transfers", "host": ["{{baseUrl}}"], "path": ["transfers"] }
+          }
+        },
+        {
+          "name": "Replay same requestId -> same transferId",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created (replayed, not re-applied)', () => pm.response.to.have.status(201));",
+                  "pm.test('same transferId as the first call', () => {",
+                  "    pm.expect(String(pm.response.json().transferId))",
+                  "        .to.eql(pm.collectionVariables.get('idempotentTransferId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fromUserId\": \"{{alice}}\",\n  \"toUserId\": \"{{bob}}\",\n  \"amount\": 25,\n  \"requestId\": \"{{requestId}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/transfers", "host": ["{{baseUrl}}"], "path": ["transfers"] }
+          }
+        },
+        {
+          "name": "Same requestId, different amount -> 422",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fromUserId\": \"{{alice}}\",\n  \"toUserId\": \"{{bob}}\",\n  \"amount\": 99,\n  \"requestId\": \"{{requestId}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/transfers", "host": ["{{baseUrl}}"], "path": ["transfers"] }
+          }
+        },
+        {
+          "name": "Insufficient funds -> 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fromUserId\": \"{{bob}}\",\n  \"toUserId\": \"{{alice}}\",\n  \"amount\": 999999\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/transfers", "host": ["{{baseUrl}}"], "path": ["transfers"] }
+          }
+        },
+        {
+          "name": "Self-transfer -> 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fromUserId\": \"{{alice}}\",\n  \"toUserId\": \"{{alice}}\",\n  \"amount\": 10\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/transfers", "host": ["{{baseUrl}}"], "path": ["transfers"] }
+          }
+        },
+        {
+          "name": "Transfer to unknown user -> 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fromUserId\": \"{{alice}}\",\n  \"toUserId\": \"ghost_{{alice}}\",\n  \"amount\": 10\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/transfers", "host": ["{{baseUrl}}"], "path": ["transfers"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. History",
+      "item": [
+        {
+          "name": "History for Alice",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('page shape with content', () => {",
+                  "    const b = pm.response.json();",
+                  "    pm.expect(b).to.have.keys('content', 'page', 'size', 'totalElements');",
+                  "    pm.expect(b.content).to.be.an('array').that.is.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/transfers?userId={{alice}}&page=0&size=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["transfers"],
+              "query": [
+                { "key": "userId", "value": "{{alice}}" },
+                { "key": "page", "value": "0" },
+                { "key": "size", "value": "10" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Bad page size -> 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/transfers?userId={{alice}}&size=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["transfers"],
+              "query": [
+                { "key": "userId", "value": "{{alice}}" },
+                { "key": "size", "value": "0" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Cancel",
+      "item": [
+        {
+          "name": "Create a transfer to cancel",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('cancelTransferId', String(pm.response.json().transferId));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fromUserId\": \"{{alice}}\",\n  \"toUserId\": \"{{bob}}\",\n  \"amount\": 40\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/transfers", "host": ["{{baseUrl}}"], "path": ["transfers"] }
+          }
+        },
+        {
+          "name": "Cancel it",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('status CANCELLED', () => {",
+                  "    pm.expect(pm.response.json().status).to.eql('CANCELLED');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/transfers/{{cancelTransferId}}/cancel",
+              "host": ["{{baseUrl}}"],
+              "path": ["transfers", "{{cancelTransferId}}", "cancel"]
+            }
+          }
+        },
+        {
+          "name": "Cancel again (idempotent)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK on double-cancel', () => pm.response.to.have.status(200));",
+                  "pm.test('still CANCELLED', () => {",
+                  "    pm.expect(pm.response.json().status).to.eql('CANCELLED');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/transfers/{{cancelTransferId}}/cancel",
+              "host": ["{{baseUrl}}"],
+              "path": ["transfers", "{{cancelTransferId}}", "cancel"]
+            }
+          }
+        },
+        {
+          "name": "Balance restored after cancel",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('back to 825 (1000 - 150 - 25, the 40 refunded)', () => {",
+                  "    pm.expect(Number(pm.response.json().balance)).to.eql(825);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/users/{{alice}}/balance",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "{{alice}}", "balance"]
+            }
+          }
+        },
+        {
+          "name": "Cancel unknown transfer -> 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/transfers/999999999/cancel",
+              "host": ["{{baseUrl}}"],
+              "path": ["transfers", "999999999", "cancel"]
+            }
+          }
+        },
+        {
+          "name": "History shows CANCELLED original + reversal",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('contains the CANCELLED original and its linked reversal', () => {",
+                  "    const items = pm.response.json().content;",
+                  "    const cancelledId = Number(pm.collectionVariables.get('cancelTransferId'));",
+                  "    const original = items.find(i => i.id === cancelledId);",
+                  "    const reversal = items.find(i => i.reversalOf === cancelledId);",
+                  "    pm.expect(original, 'original row').to.exist;",
+                  "    pm.expect(original.status).to.eql('CANCELLED');",
+                  "    pm.expect(reversal, 'reversal row').to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/transfers?userId={{alice}}&page=0&size=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["transfers"],
+              "query": [
+                { "key": "userId", "value": "{{alice}}" },
+                { "key": "page", "value": "0" },
+                { "key": "size", "value": "20" }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

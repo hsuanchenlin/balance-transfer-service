@@ -61,6 +61,8 @@ echo "== idempotency: same requestId twice applies once (both return the same tr
 REQ="req-${SUFFIX}"
 call POST /transfers "{\"fromUserId\":\"${ALICE}\",\"toUserId\":\"${BOB}\",\"amount\":25,\"requestId\":\"${REQ}\"}"
 call POST /transfers "{\"fromUserId\":\"${ALICE}\",\"toUserId\":\"${BOB}\",\"amount\":25,\"requestId\":\"${REQ}\"}"
+echo "== error: same requestId, different amount → 422 =="
+call POST /transfers "{\"fromUserId\":\"${ALICE}\",\"toUserId\":\"${BOB}\",\"amount\":99,\"requestId\":\"${REQ}\"}"
 
 echo "== error: insufficient funds → 409 =="
 call POST /transfers "{\"fromUserId\":\"${BOB}\",\"toUserId\":\"${ALICE}\",\"amount\":999999}"

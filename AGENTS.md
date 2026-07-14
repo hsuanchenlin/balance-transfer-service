@@ -9,8 +9,8 @@ Stack: Spring Boot 3, Java 21, Maven. MySQL (persistence), Redis (cache/lock), R
 **Read [`PROGRESS.md`](PROGRESS.md) first.** It is the handoff/status doc: what's done (all tickets 01–09), how to run, the architecture map, and the environment gotchas below. All tickets are merged to `main` (PR #1, merge commit `b986e50`); start new work on a fresh branch/PR off `main`.
 
 Environment gotchas that will bite you if unread (details in PROGRESS.md):
-- **Testcontainers doesn't work here** (Docker 29.x vs bundled docker-java → HTTP 400). Integration tests run against the **compose MySQL** — run `docker compose up -d` before `./mvnw verify`.
-- **RocketMQ is off in tests** (`rocketmq.enabled=false`); the live smoke test is `@Disabled` (broker not host-reachable without `brokerIP1`).
+- **`./mvnw verify` is self-contained** - integration tests run on Testcontainers-managed MySQL/Redis (`AbstractIntegrationTest`); only a Docker daemon is needed, not the compose stack. Docker Engine 29+ rejects old Docker API handshakes, so the base class pins `api.version=1.44` for docker-java.
+- **RocketMQ is off in tests** (`rocketmq.enabled=false`); the end-to-end smoke test is opt-in: `ROCKETMQ_SMOKE=true ./mvnw -Dit.test=RocketMqSmokeIT verify` (needs the compose stack up).
 
 Design canon to respect: `CONTEXT.md` (glossary), `docs/adr/*` (ADR-0001 DB-as-authority, ADR-0002 cancel-as-compensation), and `.scratch/balance-transfer-service/` (spec + `issues/NN-*.md` tickets). All nine tickets are implemented; the assignment is feature-complete.
 

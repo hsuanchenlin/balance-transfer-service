@@ -1,7 +1,6 @@
 package com.example.demo.repository;
 
 import com.example.demo.model.TransferHistoryItem;
-import com.example.demo.model.TransferResponse;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
@@ -56,10 +55,15 @@ public class TransferRepository {
         return keyHolder.getKey().longValue();
     }
 
-    public Optional<TransferResponse> findByRequestId(String requestId) {
-        return jdbc.sql("SELECT id, status FROM transfer WHERE request_id = :requestId")
+    /**
+     * The transfer recorded under an idempotency key, with its full payload so
+     * the replay path can verify the retry matches the original request.
+     */
+    public Optional<TransferHistoryItem> findByRequestId(String requestId) {
+        return jdbc.sql("SELECT id, from_user_id, to_user_id, amount, status, reversal_of, created_at "
+                        + "FROM transfer WHERE request_id = :requestId")
                 .param("requestId", requestId)
-                .query((rs, rowNum) -> new TransferResponse(rs.getLong("id"), rs.getString("status")))
+                .query(TransferRepository::mapItem)
                 .optional();
     }
 
@@ -88,6 +92,10 @@ public class TransferRepository {
      * Transfers the user was involved in as sender <em>or</em> receiver, newest
      * first, one page at a time. {@code created_at DESC, id DESC} gives a stable
      * total order even when rows share a timestamp.
+     *
+     * <p>The {@code OR} predicate caps out at an index merge; at scale the
+     * evolution is a {@code UNION ALL} over the two indexed halves plus keyset
+     * pagination (see README, "Known limits and scale evolutions").
      */
     public List<TransferHistoryItem> listByUser(String userId, int size, long offset) {
         return jdbc.sql("SELECT id, from_user_id, to_user_id, amount, status, reversal_of, created_at "

@@ -28,7 +28,7 @@ class TransferIdempotencyIT extends AbstractIntegrationTest {
     }
 
     @SuppressWarnings("rawtypes")
-    private ResponseEntity<Map> transfer(String from, String to, int amount, String requestId) {
+    private ResponseEntity<Map> transfer(String from, String to, Object amount, String requestId) {
         var body = new HashMap<String, Object>();
         body.put("fromUserId", from);
         body.put("toUserId", to);
@@ -54,6 +54,52 @@ class TransferIdempotencyIT extends AbstractIntegrationTest {
         // Replay returns the original transfer's id.
         assertThat(second.getBody().get("transferId"))
                 .isEqualTo(first.getBody().get("transferId"));
+    }
+
+    @Test
+    void sameRequestId_differentAmount_rejected422_movesNoMoney() {
+        createUser("s", 1000);
+        createUser("r", 0);
+
+        var first = transfer("s", "r", 100, "req-mismatch");
+        var reused = transfer("s", "r", 250, "req-mismatch");
+
+        assertThat(first.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(reused.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        // ApiError shape, with the offending key called out.
+        assertThat(reused.getBody().get("status")).isEqualTo(422);
+        assertThat(reused.getBody().get("message").toString()).contains("req-mismatch");
+        // Only the original transfer moved money.
+        assertThat(balanceOf("s")).isEqualByComparingTo("900");
+        assertThat(balanceOf("r")).isEqualByComparingTo("100");
+    }
+
+    @Test
+    void sameRequestId_differentParties_rejected422() {
+        createUser("s", 1000);
+        createUser("r", 0);
+
+        transfer("s", "r", 100, "req-parties");
+        var reversedParties = transfer("r", "s", 100, "req-parties");
+
+        assertThat(reversedParties.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(balanceOf("s")).isEqualByComparingTo("900");
+        assertThat(balanceOf("r")).isEqualByComparingTo("100");
+    }
+
+    @Test
+    void sameRequestId_samePayloadDifferentScale_replaysOriginal() {
+        createUser("s", 1000);
+        createUser("r", 0);
+
+        var first = transfer("s", "r", 100, "req-scale");
+        // 100.00 is the same amount as 100 - scale must not break the replay.
+        var second = transfer("s", "r", new BigDecimal("100.00"), "req-scale");
+
+        assertThat(second.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(second.getBody().get("transferId"))
+                .isEqualTo(first.getBody().get("transferId"));
+        assertThat(balanceOf("s")).isEqualByComparingTo("900");
     }
 
     @Test

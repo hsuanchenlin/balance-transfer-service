@@ -26,14 +26,15 @@ The two account rows a transfer touches (debit + credit) are always locked in **
 
 The multi-instance hazard that *does* remain is a retried/duplicated request. A client may send an optional `requestId`, stored under a `UNIQUE` constraint:
 
-- **Sequential retry** replays the original transfer's result (same `transferId`), applying the money move once.
+- **Sequential retry** with the same payload replays the original transfer's result (same `transferId`), applying the money move once.
+- **Reused key, different payload** (other parties or amount) is rejected with `422` - a mismatched "retry" is a client bug, and replaying the original result would silently answer a question the client did not ask (same contract as Stripe's idempotency keys).
 - **Concurrent duplicate** loses the unique-key race and is rolled back (`409`), so the transfer applies **at most once**.
 
 This is a database invariant, not a lock with a timeout - it holds no matter how many instances race. See `TransferIdempotencyIT`.
 
 ### 3. Redis is a read-path cache only
 
-Balance reads are cache-aside (`balance:<userId>`, 5-min TTL). The cache is **invalidated after the DB commit** (`afterCommit` hook), never before - so a concurrent reader can't repopulate it with a balance the transaction might roll back. The TTL means any missed invalidation self-heals. Redis is never consulted to decide whether a transfer may proceed.
+Balance reads are cache-aside (`balance:<userId>`, 5-min TTL). The cache is **invalidated after the DB commit** (`afterCommit` hook), never before - so a concurrent reader can't repopulate it with a balance the transaction might roll back. The TTL means any missed invalidation self-heals. Redis is never consulted to decide whether a transfer may proceed. The cache is also **fail-open**: a Redis outage degrades to reading MySQL directly (and never fails an already-committed transfer) - performance may drop, correctness cannot.
 
 ### 4. RocketMQ carries async side-effects, best-effort
 
@@ -64,7 +65,7 @@ Base URL `http://localhost:8080`. Errors share one JSON shape: `{timestamp, stat
 |--------|------|---------|---------|----------------|
 | `POST` | `/users` | Create a user with an initial balance | `201` | `409` duplicate userId, `400` validation |
 | `GET` | `/users/{userId}/balance` | Current balance (Redis-cached) | `200` | `404` unknown user |
-| `POST` | `/transfers` | Atomic transfer; optional `requestId` for idempotency | `201` | `409` insufficient funds / duplicate requestId, `404` unknown user, `400` self-transfer or bad amount |
+| `POST` | `/transfers` | Atomic transfer; optional `requestId` for idempotency | `201` | `409` insufficient funds / duplicate requestId, `422` requestId reused with different payload, `404` unknown user, `400` self-transfer or bad amount |
 | `GET` | `/transfers?userId=&page=&size=` | Paged history (sender or receiver), newest first | `200` | `400` bad paging / missing userId |
 | `POST` | `/transfers/{transferId}/cancel` | Compensating reversal within 10 min | `200` | `409` too old / receiver can't cover, `404` unknown transfer |
 
@@ -93,7 +94,7 @@ Base URL `http://localhost:8080`. Errors share one JSON shape: `{timestamp, stat
 
 Paging defaults: `page=0`, `size=20`; bounds `page ≥ 0`, `1 ≤ size ≤ 100` (out-of-range → `400`).
 
-Runnable `curl` samples for every endpoint, including the error cases, are in [`scripts/curl-samples.sh`](scripts/curl-samples.sh).
+Runnable `curl` samples for every endpoint, including the error cases, are in [`scripts/curl-samples.sh`](scripts/curl-samples.sh). The same walkthrough is available as a Postman collection with per-request assertions: [`scripts/balance-transfer.postman_collection.json`](scripts/balance-transfer.postman_collection.json) (import it, or `npx newman run scripts/balance-transfer.postman_collection.json`).
 
 ---
 
@@ -115,9 +116,12 @@ Full setup notes, data scripts, and the test story are in [HELP.md](HELP.md).
 ## Test
 
 ```bash
-docker compose up -d      # the integration tests run against this stack
 ./mvnw verify             # unit (surefire) + integration *IT (failsafe)
 ```
+
+The suite is self-contained: integration tests start their own Testcontainers
+MySQL (seeded with the same `init.sql` as compose) and Redis, so only a Docker
+daemon is required - the compose stack is for running the app itself.
 
 ## Architecture
 
@@ -132,8 +136,17 @@ Standard layered structure under `src/main/java/com/example/demo/`:
 - `config/` - RocketMQ producer/consumer wiring
 - `exception/` - domain exceptions + `GlobalExceptionHandler`
 
-Ubiquitous language is fixed in [CONTEXT.md](CONTEXT.md); the schema is in [init.sql](init.sql).
+Ubiquitous language is fixed in [CONTEXT.md](CONTEXT.md); the schema is in [init.sql](init.sql). For an exhaustive file-by-file tour (every class, the schema column by column, and what each test proves), see [docs/code-walkthrough.md](docs/code-walkthrough.md).
 
 ## Tech-choice note
 
 `JdbcClient` over JPA on purpose: the whole design rests on *exact* SQL - the conditional-update guards, lock ordering, and the guarded status flip. Explicit SQL keeps those front and center instead of behind an ORM. `SELECT … FOR UPDATE` would give equivalent correctness to the conditional update and is the main alternative (see ADR-0001).
+
+## Known limits and scale evolutions
+
+Deliberate trade-offs at homework scale, with the production evolution named for each:
+
+- **History query**: `WHERE from_user_id = :u OR to_user_id = :u` defeats single-column indexes (MySQL manages an index merge at best), and the `COUNT(*)` for page metadata repeats that scan on every page. The evolution is a `UNION ALL` over the two indexed halves plus keyset pagination; the spec lists keyset as out of scope, so the OR-query stays for readability.
+- **Offset pagination drift**: a row inserted while a client pages can shift entries between pages. Keyset pagination (`WHERE (created_at, id) < (:cursor...)`) is the same evolution as above.
+- **Cache-aside stale-read race**: `getBalance` reads MySQL then `put`s into Redis; a transfer committing between those two steps can leave a stale cached balance until the next eviction or the 5-minute TTL. This is the classic cache-aside window; the TTL bounds it, and no decision ever reads the cache.
+- **Best-effort event publish**: a crash between the DB commit and the RocketMQ send loses that event (audit log misses one row). The evolution is a transactional outbox, called out in section 4 and in the publisher code.
