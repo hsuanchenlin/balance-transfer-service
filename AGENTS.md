@@ -29,7 +29,7 @@ Design canon to respect: `CONTEXT.md` (glossary), `docs/adr/*` (ADR-0001 DB-as-a
 - `docker compose up -d` — start MySQL/Redis/RocketMQ dependencies
 
 ## Conventions
-- Domain vocabulary lives in `CONTEXT.md` (once created). Use its terms, don't drift to synonyms.
+- Domain vocabulary lives in `CONTEXT.md`. Use its terms, don't drift to synonyms.
 - Transfers must be atomic — no partial debit/credit.
 - `userId` is unique.
 
