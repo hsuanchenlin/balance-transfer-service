@@ -93,7 +93,7 @@ Expected: **all tests pass, 1 skipped** (`RocketMqSmokeIT`, see below). `verify`
 also enforces the JaCoCo coverage and SpotBugs quality gates (see the README's
 "Test" section).
 
-To also run the end-to-end RocketMQ smoke test (transfer → broker → consumer → `audit_log` row, ~30-60s; this one DOES need `docker compose up -d`):
+To also run the end-to-end RocketMQ smoke test (transfer → outbox relay → broker → consumer → `audit_log` row, ~30-60s; this one DOES need `docker compose up -d`):
 
 ```bash
 ROCKETMQ_SMOKE=true ./mvnw -Dit.test=RocketMqSmokeIT verify

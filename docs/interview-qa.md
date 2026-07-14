@@ -48,8 +48,8 @@ cancel linkage), `outbox_event` (the transactional outbox feeding RocketMQ),
    cache again.
 
 Cancel (`POST /transfers/{id}/cancel`) is the same shape in reverse: a guarded
-status flip, then a compensating movement receiver -> sender, then afterCommit
-side-effects. History (`GET /transfers`) and balance (`GET /users/{id}/balance`)
+status flip, then a compensating movement receiver -> sender, then the same
+outbox append + afterCommit cache eviction. History (`GET /transfers`) and balance (`GET /users/{id}/balance`)
 are read-only paths.
 
 ## Part 2 - interviewer Q&A
@@ -230,8 +230,8 @@ engine. Hence the failsafe suite (`*IT`, `AbstractIntegrationTest`) boots the
 real app against a Testcontainers-managed MySQL 8 seeded with the production
 `init.sql`, plus a Redis container, and asserts external behavior - HTTP codes,
 resulting balances, conservation of total money - while a few genuine units
-(cache fail-open, error-model catch-all, event handler, publisher
-serialization) are surefire unit tests with mocks. The suite is fully self-contained: `./mvnw verify` needs a
+(cache fail-open, error-model catch-all, event handler, outbox appender and
+sender serialization) are surefire unit tests with mocks. The suite is fully self-contained: `./mvnw verify` needs a
 Docker daemon and nothing else.
 
 ### Q15. What error contract does the API promise?
