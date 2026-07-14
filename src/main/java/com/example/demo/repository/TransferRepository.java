@@ -67,6 +67,22 @@ public class TransferRepository {
                 .optional();
     }
 
+    /**
+     * Locking read used to classify a lost same-requestId insert race: it sees the
+     * winner's committed row, which a plain read cannot (under REPEATABLE READ the
+     * transaction's snapshot predates the winner's commit). {@code FOR SHARE}, not
+     * {@code FOR UPDATE}: the failed insert already left this transaction holding a
+     * shared lock on the winning unique-index record, so concurrent losers asking
+     * for an exclusive lock would deadlock each other.
+     */
+    public Optional<TransferHistoryItem> findByRequestIdForShare(String requestId) {
+        return jdbc.sql("SELECT id, from_user_id, to_user_id, amount, status, reversal_of, created_at "
+                        + "FROM transfer WHERE request_id = :requestId FOR SHARE")
+                .param("requestId", requestId)
+                .query(TransferRepository::mapItem)
+                .optional();
+    }
+
     public Optional<TransferHistoryItem> findById(long id) {
         return jdbc.sql("SELECT id, from_user_id, to_user_id, amount, status, reversal_of, created_at "
                         + "FROM transfer WHERE id = :id")

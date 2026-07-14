@@ -57,8 +57,8 @@ public class TransferService {
      * constraint, making the operation idempotent: a sequential retry with the
      * same payload replays the original result, a retry with a different payload
      * is rejected with {@link IdempotencyConflictException} (422), and a
-     * concurrent duplicate is rejected (rolling back its attempt) so the
-     * transfer applies at most once.
+     * concurrent duplicate is rejected (rolling back its attempt) with that
+     * same payload classification, so the transfer applies at most once.
      */
     @Transactional
     public TransferResponse transfer(TransferRequest request) {
@@ -84,10 +84,7 @@ public class TransferService {
             Optional<TransferHistoryItem> existing = transfers.findByRequestId(requestId);
             if (existing.isPresent()) {
                 TransferHistoryItem original = existing.get();
-                boolean samePayload = original.fromUserId().equals(from)
-                        && original.toUserId().equals(to)
-                        && original.amount().compareTo(request.amount()) == 0;
-                if (!samePayload) {
+                if (!samePayload(original, request)) {
                     throw new IdempotencyConflictException(requestId);
                 }
                 return new TransferResponse(original.id(), original.status());
@@ -102,8 +99,16 @@ public class TransferService {
         try {
             transferId = transfers.insertCompleted(from, to, request.amount(), requestId);
         } catch (DuplicateKeyException e) {
-            // Lost a concurrent race on the same requestId — roll this attempt back
+            // Lost a concurrent race on the same requestId - roll this attempt back
             // (the balance changes above are undone) so the transfer applies once.
+            // Classify the loser exactly like the sequential path: a reused key with
+            // a different payload is a client bug (422), not a retry (409).
+            boolean conflictingPayload = transfers.findByRequestIdForShare(requestId)
+                    .map(winner -> !samePayload(winner, request))
+                    .orElse(false);
+            if (conflictingPayload) {
+                throw new IdempotencyConflictException(requestId);
+            }
             throw new DuplicateRequestException(requestId);
         }
         // Run side-effects only after the DB commit: invalidate the read-path cache
@@ -180,6 +185,16 @@ public class TransferService {
             eventPublisher.publishCancelled(event);
         });
         return new TransferResponse(transferId, "CANCELLED");
+    }
+
+    /**
+     * Whether a retry carries the same payload as the transfer already recorded
+     * under its idempotency key. Amounts compare by value, not scale (100 == 100.00).
+     */
+    private static boolean samePayload(TransferHistoryItem original, TransferRequest request) {
+        return original.fromUserId().equals(request.fromUserId())
+                && original.toUserId().equals(request.toUserId())
+                && original.amount().compareTo(request.amount()) == 0;
     }
 
     /**

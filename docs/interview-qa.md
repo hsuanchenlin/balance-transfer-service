@@ -121,8 +121,9 @@ UNIQUE constraint. Three cases:
   did not ask. Same contract as Stripe's idempotency keys.
 - **Concurrent duplicate** (race): both requests pass the lookup, both debit,
   but only one INSERT of the transfer row can succeed; the loser gets
-  `DuplicateKeyException`, which rolls back its balance changes, and returns
-  409. Net effect: at most one application of the transfer.
+  `DuplicateKeyException`, rolls back its balance changes, and is classified
+  like a sequential retry (409 for the same payload, 422 for a different
+  one). Net effect: at most one application of the transfer.
 
 The database constraint, not a check-then-act, is the guarantee - it holds
 across instances and across races. This is what makes retries safe in a

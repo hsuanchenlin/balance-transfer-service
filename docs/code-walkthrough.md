@@ -141,9 +141,12 @@ All six are Java records: immutable, value-semantics, no boilerplate.
      different request is a client bug, not a retry.
   3. `moveInLockOrder(from, to, amount)` moves the money (see below).
   4. Insert the `transfer` row. If the `UNIQUE(request_id)` constraint fires
-     here, a concurrent duplicate won the race: throw
-     `DuplicateRequestException` (409), which rolls back this attempt's
-     balance changes - the transfer applies at most once.
+     here, a concurrent duplicate won the race. The loser re-reads the winning
+     row with a locking read (`FOR SHARE`, because the plain-read snapshot
+     predates the winner's commit) and classifies exactly like step 2: same
+     payload throws `DuplicateRequestException` (409), a different payload
+     throws `IdempotencyConflictException` (422). Either way this attempt's
+     balance changes roll back - the transfer applies at most once.
   5. Register an `afterCommit` hook: evict both cached balances, publish
      `TransferCompletedEvent`. Side-effects run only if the commit succeeded,
      and the write transaction never blocks on Redis or RocketMQ.
@@ -287,7 +290,7 @@ correctness story lives in the exact SQL, so it is kept visible.
   | `UserNotFoundException`, `TransferNotFoundException` | 404 | unknown user / transfer |
   | `UserAlreadyExistsException` | 409 | duplicate userId |
   | `InsufficientFundsException` | 409 | debit guard hit 0 rows |
-  | `DuplicateRequestException` | 409 | lost a concurrent same-requestId race |
+  | `DuplicateRequestException` | 409 | lost a concurrent same-requestId race (same payload) |
   | `CancellationNotAllowedException` | 409 | outside the 10-minute window / reversal target |
   | `IdempotencyConflictException` | 422 | requestId reused with a different payload |
   | anything implementing Spring's `ErrorResponse` | its own status | 405, unknown route 404, 406/415 - honored, not masked as 500 |
@@ -388,7 +391,7 @@ surefire, `*IT` via failsafe).
 | [`TransferConcurrencyIT`](../src/test/java/com/example/demo/TransferConcurrencyIT.java) | IT | The centerpiece: under concurrent overspend and bidirectional storms, no lost updates, no negative balance, total money conserved. |
 | [`TransferConservationStressIT`](../src/test/java/com/example/demo/TransferConservationStressIT.java) | IT | Complements the fixed-pair storms with a random-pair storm from a fixed-seed schedule: total conserved, no negative balance, COMPLETED ledger rows match 201 responses one-to-one (replaying them reproduces every final balance), concurrent identical retries apply exactly once, and the cached read path agrees with the DB. |
 | [`TransferEndpointIT`](../src/test/java/com/example/demo/TransferEndpointIT.java) | IT | Happy path 201 + the 4xx contract (insufficient funds, unknown parties, self-transfer, non-positive amount). |
-| [`TransferIdempotencyIT`](../src/test/java/com/example/demo/TransferIdempotencyIT.java) | IT | Sequential replay returns the original; payload mismatch is 422 and moves no money; scale-insensitive amount comparison; concurrent duplicates apply exactly once. |
+| [`TransferIdempotencyIT`](../src/test/java/com/example/demo/TransferIdempotencyIT.java) | IT | Sequential replay returns the original; payload mismatch is 422 and moves no money; scale-insensitive amount comparison; concurrent duplicates apply exactly once; a race loser classifies payload mismatch as 422 like the sequential path. |
 | [`TransferCancelIT`](../src/test/java/com/example/demo/TransferCancelIT.java) | IT | Reversal restores balances; double-cancel idempotent; 409 when receiver can't cover, outside the window, or target is a reversal; 404 unknown. |
 | [`TransferHistoryIT`](../src/test/java/com/example/demo/TransferHistoryIT.java) | IT | Newest-first ordering as sender or receiver, stable pagination, empty page, 400 on bad paging. |
 | [`UserEndpointIT`](../src/test/java/com/example/demo/UserEndpointIT.java) | IT | Create/balance happy paths, 409 duplicate, 404 unknown, 400 negative initial balance. |

@@ -28,7 +28,7 @@ The multi-instance hazard that *does* remain is a retried/duplicated request. A 
 
 - **Sequential retry** with the same payload replays the original transfer's result (same `transferId`), applying the money move once.
 - **Reused key, different payload** (other parties or amount) is rejected with `422` - a mismatched "retry" is a client bug, and replaying the original result would silently answer a question the client did not ask (same contract as Stripe's idempotency keys).
-- **Concurrent duplicate** loses the unique-key race and is rolled back (`409`), so the transfer applies **at most once**.
+- **Concurrent duplicate** loses the unique-key race and is rolled back, then classified like a sequential retry: same payload `409`, different payload `422`. The transfer applies **at most once**.
 
 This is a database invariant, not a lock with a timeout - it holds no matter how many instances race. See `TransferIdempotencyIT`.
 
