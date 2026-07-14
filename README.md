@@ -133,10 +133,12 @@ daemon is required - the compose stack is for running the app itself.
 ## CI
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every pull request and
-on pushes to `main`: it starts the compose MySQL + Redis on the runner, waits for the
-`init.sql` schema, then runs `./mvnw -B verify` - the same tests and gates as locally.
-RocketMQ is not started; tests run with `rocketmq.enabled=false` and the live smoke
-test stays `@Disabled`.
+on pushes to `main`: it runs `./mvnw -B verify` on JDK 21 - the same tests and gates
+as locally. The integration tests start their own Testcontainers MySQL and Redis on
+the runner's Docker daemon; the compose stack is only for running the app. RocketMQ
+is not started: tests run with `rocketmq.enabled=false`, and the live smoke test
+(`RocketMqSmokeIT`) is opt-in via the `ROCKETMQ_SMOKE` environment variable, which is
+unset in CI, so it stays skipped.
 
 ## Architecture
 
