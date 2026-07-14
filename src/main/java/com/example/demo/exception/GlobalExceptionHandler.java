@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -109,20 +110,28 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiError> handleUnexpected(Exception ex, HttpServletRequest req) {
         if (ex instanceof ErrorResponse springError) {
-            HttpStatus status = HttpStatus.valueOf(springError.getStatusCode().value());
-            return build(status, status.getReasonPhrase(), req);
+            HttpStatus status = HttpStatus.resolve(springError.getStatusCode().value());
+            if (status == null) {
+                status = HttpStatus.INTERNAL_SERVER_ERROR;
+            }
+            return build(status, status.getReasonPhrase(), req, springError.getHeaders());
         }
         log.error("Unhandled exception for {} {}", req.getMethod(), req.getRequestURI(), ex);
         return build(HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred", req);
     }
 
     private ResponseEntity<ApiError> build(HttpStatus status, String message, HttpServletRequest req) {
+        return build(status, message, req, HttpHeaders.EMPTY);
+    }
+
+    private ResponseEntity<ApiError> build(HttpStatus status, String message, HttpServletRequest req,
+                                           HttpHeaders headers) {
         ApiError body = new ApiError(
                 OffsetDateTime.now(),
                 status.value(),
                 status.getReasonPhrase(),
                 message,
                 req.getRequestURI());
-        return ResponseEntity.status(status).body(body);
+        return ResponseEntity.status(status).headers(headers).body(body);
     }
 }

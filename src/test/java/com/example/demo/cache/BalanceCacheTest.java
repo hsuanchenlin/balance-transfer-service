@@ -14,6 +14,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -62,5 +63,14 @@ class BalanceCacheTest {
         when(values.get("balance:alice")).thenReturn("42.5000");
 
         assertThat(cache.get("alice")).contains(new BigDecimal("42.5000"));
+    }
+
+    @Test
+    void get_treatsUnparseableEntryAsMissAndEvictsIt() {
+        when(redis.opsForValue()).thenReturn(values);
+        when(values.get("balance:alice")).thenReturn("not-a-number");
+
+        assertThat(cache.get("alice")).isEmpty();
+        verify(redis).delete("balance:alice");
     }
 }

@@ -38,11 +38,21 @@ public class BalanceCache {
     }
 
     public Optional<BigDecimal> get(String userId) {
+        String value;
         try {
-            String value = redis.opsForValue().get(key(userId));
-            return value == null ? Optional.empty() : Optional.of(new BigDecimal(value));
+            value = redis.opsForValue().get(key(userId));
         } catch (DataAccessException e) {
             log.warn("Balance cache read failed for {}; treating as a miss", userId, e);
+            return Optional.empty();
+        }
+        if (value == null) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(new BigDecimal(value));
+        } catch (NumberFormatException e) {
+            log.warn("Balance cache entry for {} is unparseable; evicting and treating as a miss", userId, e);
+            evict(userId);
             return Optional.empty();
         }
     }
