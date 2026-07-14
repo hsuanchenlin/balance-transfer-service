@@ -89,7 +89,9 @@ The integration tests are self-contained: `AbstractIntegrationTest` starts its o
 Testcontainers MySQL (seeded with the repo-root `init.sql`) and Redis, so only a
 Docker daemon is required - the compose stack does not need to be up.
 
-Expected: **all tests pass, 1 skipped** (`RocketMqSmokeIT`, see below).
+Expected: **all tests pass, 1 skipped** (`RocketMqSmokeIT`, see below). `verify`
+also enforces the JaCoCo coverage and SpotBugs quality gates (see the README's
+"Test" section).
 
 To also run the end-to-end RocketMQ smoke test (transfer → broker → consumer → `audit_log` row, ~30-60s; this one DOES need `docker compose up -d`):
 
