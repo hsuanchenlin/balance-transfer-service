@@ -30,7 +30,7 @@ docker compose ps            # STATUS should read "healthy" for mysql
 
 ## 2. Schema / data script
 
-The schema lives in [`init.sql`](init.sql) (tables `account`, `transfer`, `audit_log`). Docker mounts it and applies it **automatically on a fresh MySQL volume** - normally you do nothing.
+The schema lives in [`init.sql`](init.sql) (tables `account`, `transfer`, `audit_log`, `outbox_event`). Docker mounts it and applies it **automatically on a fresh MySQL volume** - normally you do nothing.
 
 If the MySQL volume already exists (schema changed but volume is old), apply it by hand:
 

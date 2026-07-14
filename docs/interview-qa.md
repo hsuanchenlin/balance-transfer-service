@@ -14,16 +14,17 @@ class, schema column by column, every test class) see
 |---|---|---|
 | `controller/` | HTTP in/out + input validation, no logic | `UserController`, `TransferController` |
 | `service/` | business rules + transaction boundaries | `UserService`, `TransferService` |
-| `repository/` | one SQL statement per method, `JdbcClient` | `AccountRepository`, `TransferRepository`, `AuditRepository` |
+| `repository/` | one SQL statement per method, `JdbcClient` | `AccountRepository`, `TransferRepository`, `AuditRepository`, `OutboxRepository` |
 | `model/` | request/response records (immutable DTOs) | `TransferRequest`, `PageResponse`, ... |
 | `exception/` | domain exceptions + one place mapping them to HTTP | `GlobalExceptionHandler`, `ApiError` |
 | `cache/` | Redis read-path cache, fail-open | `BalanceCache` |
-| `event/` | RocketMQ DTOs, publisher (real + no-op), consumer handler | `TransferEventPublisher`, `TransferEventHandler` |
-| `config/` | RocketMQ producer/consumer beans, gated on `rocketmq.enabled` | `RocketMqConfig` |
+| `event/` | RocketMQ DTOs, transactional outbox (appender + relay + sender pair), consumer handler | `TransferOutbox`, `OutboxRelay`, `TransferEventHandler` |
+| `config/` | RocketMQ producer/consumer beans (gated on `rocketmq.enabled`), relay scheduling | `RocketMqConfig`, `SchedulingConfig` |
 
-Three tables (`init.sql`): `account` (mutable authoritative balance),
+Four tables (`init.sql`): `account` (mutable authoritative balance),
 `transfer` (append-only history, also carries the idempotency key and the
-cancel linkage), `audit_log` (written asynchronously by the MQ consumer).
+cancel linkage), `outbox_event` (the transactional outbox feeding RocketMQ),
+`audit_log` (written asynchronously by the MQ consumer).
 
 ### Life of a transfer (`POST /transfers`)
 
@@ -37,10 +38,12 @@ cancel linkage), `audit_log` (written asynchronously by the MQ consumer).
      `userId` order (`moveInLockOrder`);
    - insert the `transfer` row; a `UNIQUE(request_id)` violation here means a
      concurrent duplicate won the race, so this attempt rolls back;
-   - register an afterCommit hook: evict both balance cache entries, publish
-     `TransferCompletedEvent`.
+   - append `TransferCompletedEvent` to the `outbox_event` table (same
+     transaction - the event commits iff the transfer does) and register an
+     afterCommit hook that evicts both balance cache entries.
 3. Commit releases the row locks. The hook runs only after a successful commit.
-4. Asynchronously, the RocketMQ consumer (`RocketMqConfig` listener ->
+4. Asynchronously, `OutboxRelay` publishes the outbox row to RocketMQ
+   (at-least-once), and the consumer (`RocketMqConfig` listener ->
    `TransferEventHandler`) writes an idempotent `audit_log` row and evicts the
    cache again.
 
@@ -146,16 +149,18 @@ reads fall through to MySQL and committed transfers still return 201.
 ### Q8. What is RocketMQ for, and what if the broker is down?
 
 Asynchronous side-effects that must not sit inside the money transaction:
-`TransferCompletedEvent` / `TransferCancelledEvent` are published afterCommit;
-the consumer writes an `audit_log` row and evicts caches. Publishing is
-best-effort by design: the transfer is already committed, so a broker outage
-logs a warning and the API call still succeeds
-(`RocketMqTransferEventPublisher`). The gap - a crash after commit but before
-publish loses the event - is the textbook case for a transactional outbox
-(write the event into the DB transaction, relay it separately), documented as
-the production evolution. Consumer redelivery is handled by idempotency:
-`INSERT IGNORE` against `UNIQUE(event_type, transfer_id)` (`AuditRepository`),
-and cache eviction is naturally idempotent.
+`TransferCompletedEvent` / `TransferCancelledEvent` go through a transactional
+outbox. The request path appends the event to `outbox_event` *inside* the same
+DB transaction as the money movement (`TransferOutbox`), so the event exists
+iff the transfer committed; a scheduled relay (`OutboxRelay`, 1s poll) then
+publishes unpublished rows to the broker and stamps `published_at`. A broker
+outage therefore delays delivery instead of losing events: a failed send
+defers the row with capped exponential backoff (`attempts` +
+`next_attempt_at`) and the API call is long since answered - the transaction
+never blocks on messaging. Delivery is at-least-once (a crash between send
+and stamp re-sends), which the consumer absorbs by idempotency: `INSERT
+IGNORE` against `UNIQUE(event_type, transfer_id)` (`AuditRepository`), and
+cache eviction is naturally idempotent.
 
 ### Q9. Walk me through cancel. Why "compensating reversal"?
 
@@ -205,7 +210,10 @@ the documented future work).
 
 ### Q13. What are the known limits and what would you build next for production?
 
-- **Transactional outbox** for reliable event publish (Q8's crash window).
+- **Outbox relay coordination** (publish reliability itself is solved by the
+  transactional outbox, Q8): `FOR UPDATE SKIP LOCKED` row claims or ShedLock
+  to stop N instances from duplicate-sending, and at larger scale
+  change-data-capture (Debezium) instead of polling.
 - **Double-entry ledger** (`ledger_entry`) as the authoritative record, with
   `account.balance` as a projection - better auditability and reconciliation.
 - **Keyset pagination + UNION-based history query**: `from_user_id = :u OR

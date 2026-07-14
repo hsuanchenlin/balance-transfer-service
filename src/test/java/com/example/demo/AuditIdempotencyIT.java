@@ -1,5 +1,6 @@
 package com.example.demo;
 
+import com.example.demo.event.TransferCancelledEvent;
 import com.example.demo.event.TransferCompletedEvent;
 import com.example.demo.event.TransferEventHandler;
 import com.example.demo.repository.AuditRepository;
@@ -28,5 +29,18 @@ class AuditIdempotencyIT extends AbstractIntegrationTest {
         handler.handle(event); // simulate RocketMQ redelivery
 
         assertThat(audit.countByTransferId(555L)).isEqualTo(1);
+    }
+
+    @Test
+    void redeliveredCancelledEvent_isRecordedExactlyOnce_alongsideTheCompletedRow() {
+        var completed = new TransferCompletedEvent(556L, "u1", "u2", new BigDecimal("10"));
+        var cancelled = new TransferCancelledEvent(556L, 557L, "u1", "u2", new BigDecimal("10"));
+
+        handler.handle(completed);
+        handler.handleCancelled(cancelled);
+        handler.handleCancelled(cancelled); // simulate at-least-once duplicate from the relay
+
+        // One row per event type: the duplicate collapses on UNIQUE(event_type, transfer_id).
+        assertThat(audit.countByTransferId(556L)).isEqualTo(2);
     }
 }

@@ -1,6 +1,6 @@
 # Balance Transfer Service — Progress & Handoff
 
-_Last updated: 2026-07-14. Resume point for a fresh Claude Code CLI session._
+_Last updated: 2026-07-15. Resume point for a fresh Claude Code CLI session._
 
 A RESTful balance-transfer service (Spring Boot 3 / Java 21, MySQL + Redis + RocketMQ), built from a homework skeleton with a spec → ADRs → tickets → TDD workflow.
 
@@ -20,7 +20,7 @@ A RESTful balance-transfer service (Spring Boot 3 / Java 21, MySQL + Redis + Roc
 
 All five assignment endpoints are implemented; README/HELP/curl submission docs are written.
 
-**Tests:** 49 pass + 1 documented skip via `mvn verify` (surefire 11 unit + failsafe 39 IT).
+**Tests:** 62 pass + 1 documented skip via `mvn verify` (surefire 15 unit + failsafe 48 IT).
 **Git:** **PR #1** (https://github.com/hsuanchenlin/balance-transfer-service/pull/1) was **merged into `main`** on 2026-07-13 (merge commit `b986e50`). All work from branch `balance-transfer-service` (tickets 01–09, including history + cancel + submission docs and the `markCancelled` reversal-row regression fix) has fully landed on `main`. New work starts on a fresh branch/PR off `main`.
 
 ## How to run
@@ -41,12 +41,12 @@ Package layout under `src/main/java/com/example/demo/`:
 
 - `controller/` — REST + DTO validation (`UserController`, `TransferController`)
 - `service/` — business logic + `@Transactional` (`UserService`, `TransferService`)
-- `repository/` — `JdbcClient` SQL (`AccountRepository`, `TransferRepository`, `AuditRepository`)
+- `repository/` — `JdbcClient` SQL (`AccountRepository`, `TransferRepository`, `AuditRepository`, `OutboxRepository`)
 - `model/` — request/response records
 - `exception/` — domain exceptions + `GlobalExceptionHandler` (`@RestControllerAdvice`, `ApiError` body `{timestamp,status,error,message,path}`)
 - `cache/` — `BalanceCache` (Redis cache-aside, keys `balance:<userId>`, 5-min TTL)
-- `event/` — RocketMQ DTO, publisher (real + no-op), consumer handler
-- `config/` — `RocketMqConfig` (producer + push consumer, gated on `rocketmq.enabled`)
+- `event/` — RocketMQ DTOs, transactional outbox (`TransferOutbox` appender, `OutboxRelay` poller, `OutboxMessageSender` real/no-op pair), consumer handler
+- `config/` — `RocketMqConfig` (producer + push consumer, gated on `rocketmq.enabled`), `SchedulingConfig` (relay scheduler, gated on `outbox.relay.enabled`)
 
 Design canon (READ THESE before changing behavior):
 - `CONTEXT.md` — domain glossary (ubiquitous language)
@@ -60,7 +60,7 @@ Design canon (READ THESE before changing behavior):
 - **Transfer safety (ADR-0001):** one `@Transactional` doing an atomic conditional debit `UPDATE account SET balance = balance - :amt WHERE user_id = :from AND balance >= :amt` (0 rows → `409`), with the two account rows touched in **ascending-userId order** to avoid deadlocks. Proven by `TransferConcurrencyIT`.
 - **Idempotency:** optional `requestId` under a `UNIQUE` constraint; sequential retry with the same payload replays the original, a reused key with a different payload is rejected with `422`, concurrent duplicate rolls back → applies at most once.
 - **Redis:** read-path cache only; invalidated in an `afterCommit` hook.
-- **RocketMQ:** transfer publishes `TransferCompletedEvent` afterCommit (best-effort); consumer writes an idempotent `audit_log` row + invalidates cache.
+- **RocketMQ:** transfer appends `TransferCompletedEvent` to the `outbox_event` table inside the money transaction (transactional outbox); the scheduled `OutboxRelay` publishes it at-least-once; consumer writes an idempotent `audit_log` row + invalidates cache.
 
 ## ⚠️ Environment gotchas (important)
 
@@ -83,7 +83,8 @@ A staff-level review of the whole codebase lives in `.scratch/balance-transfer-s
 - **Defensive credit:** `TransferService` throws if a credit touches 0 rows instead of silently dropping money (unreachable today, invariant for future refactors).
 - **Idempotency payload validation:** replaying a `requestId` with different parties or amount is rejected with `422` (`IdempotencyConflictException`) instead of silently returning the original result - Stripe's idempotency-key contract (`TransferIdempotencyIT`).
 - **Config symmetry:** the RocketMQ consumer group now comes from `rocketmq.consumer.group` in `application.yaml` instead of a hardcoded string, mirroring the producer group.
-- **Documented limits:** new README section "Known limits and scale evolutions" (history OR-query vs UNION ALL + keyset, offset-paging drift, cache-aside stale-read window, best-effort publish vs outbox), closing the last review-backlog items.
+- **Documented limits:** new README section "Known limits and scale evolutions" (history OR-query vs UNION ALL + keyset, offset-paging drift, cache-aside stale-read window, relay coordination/CDC), closing the last review-backlog items.
+- **Transactional outbox (2026-07-15):** replaced the best-effort after-commit publish with a transactional outbox - `outbox_event` row written inside the money transaction (`TransferOutbox`), delivered at-least-once by the scheduled `OutboxRelay` (1s poll, capped exponential backoff per row, gated on `outbox.relay.enabled`); the old publisher pair is gone and nothing publishes from the request path. Proven by `OutboxAtomicityIT`, `OutboxRelayIT` (spied sender, broker-free), `OutboxRelaySchedulingIT`, and the extended `AuditIdempotencyIT`.
 - **Interview prep:** `docs/interview-qa.md` - code walkthrough + answers to the 15 design questions an interviewer would ask.
 - **Full comprehension guide:** `docs/code-walkthrough.md` - exhaustive file-by-file walkthrough (every class, schema column by column, config keys, and what each test class proves), for understanding every single piece of the code.
 - **Postman collection:** `scripts/balance-transfer.postman_collection.json` - the curl walkthrough as a runnable collection with per-request assertions (21 requests, 30 assertions); verified green with `npx newman run` against the live app.

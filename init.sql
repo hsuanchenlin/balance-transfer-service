@@ -41,3 +41,20 @@ CREATE TABLE IF NOT EXISTS audit_log (
     PRIMARY KEY (id),
     UNIQUE KEY uq_audit_event (event_type, transfer_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
+
+-- Transactional outbox for RocketMQ publishing (at-least-once). A row is inserted
+-- in the SAME transaction as the transfer/cancel it describes, so the event exists
+-- iff the business change committed. The relay (event/OutboxRelay) polls unpublished
+-- rows in id order, sends them to RocketMQ, and stamps published_at; a failed send
+-- bumps attempts and defers the row via next_attempt_at (capped exponential backoff).
+CREATE TABLE IF NOT EXISTS outbox_event (
+    id              BIGINT      NOT NULL AUTO_INCREMENT,
+    event_type      VARCHAR(32) NOT NULL,               -- TransferCompleted | TransferCancelled (RocketMQ tag)
+    payload         TEXT        NOT NULL,               -- event DTO as JSON, the exact message body
+    attempts        INT         NOT NULL DEFAULT 0,     -- failed publish attempts so far
+    next_attempt_at TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP, -- earliest time the relay may (re)try
+    created_at      TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    published_at    TIMESTAMP   NULL,                   -- NULL = not yet delivered to the broker
+    PRIMARY KEY (id),
+    KEY idx_outbox_unpublished (published_at, id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;

@@ -36,9 +36,11 @@ This is a database invariant, not a lock with a timeout - it holds no matter how
 
 Balance reads are cache-aside (`balance:<userId>`, 5-min TTL). The cache is **invalidated after the DB commit** (`afterCommit` hook), never before - so a concurrent reader can't repopulate it with a balance the transaction might roll back. The TTL means any missed invalidation self-heals. Redis is never consulted to decide whether a transfer may proceed. The cache is also **fail-open**: a Redis outage degrades to reading MySQL directly (and never fails an already-committed transfer) - performance may drop, correctness cannot.
 
-### 4. RocketMQ carries async side-effects, best-effort
+### 4. RocketMQ carries async side-effects via a transactional outbox (at-least-once)
 
-On commit, a transfer publishes a `TransferCompletedEvent` (and a cancel publishes `TransferCancelledEvent`). The consumer writes an **idempotent** `audit_log` row (`UNIQUE(event_type, transfer_id)` + `INSERT IGNORE`, safe on redelivery) and invalidates cache. Publishing is best-effort and happens *after* commit: a broker outage can never fail or roll back a committed transfer. A production system would upgrade this to a transactional outbox; that trade-off is called out in the code.
+A transfer (and a cancel) appends its event to an `outbox_event` row **inside the same DB transaction** as the money movement - the event exists iff the transfer committed; nothing publishes from the request path. A scheduled relay (`OutboxRelay`, 1s poll) reads unpublished rows in order, sends each to RocketMQ, and stamps `published_at`; a failed send defers only that row with capped exponential backoff (`attempts` + `next_attempt_at`), so a broker outage delays delivery but can never lose an event or fail a committed transfer.
+
+Delivery is therefore **at-least-once** (a crash between send and stamp re-sends), and the consumer absorbs duplicates: it writes an **idempotent** `audit_log` row (`UNIQUE(event_type, transfer_id)` + `INSERT IGNORE`, safe on redelivery) and invalidates cache. Multiple app instances polling the same outbox stay correct for the same reason - the worst case is a duplicate send, not a lost one (see the locking notes on `OutboxRelay`).
 
 ### 5. Cancel is a compensating reversal ([ADR-0002](docs/adr/0002-cancel-as-compensating-reversal.md))
 
@@ -149,8 +151,8 @@ Standard layered structure under `src/main/java/com/example/demo/`:
 - `repository/` - `JdbcClient` SQL (explicit SQL by choice, so the conditional-update guards are visible)
 - `model/` - request/response records
 - `cache/` - `BalanceCache` (Redis cache-aside)
-- `event/` - RocketMQ DTOs, publisher (real + no-op), consumer handler
-- `config/` - RocketMQ producer/consumer wiring
+- `event/` - RocketMQ DTOs, transactional outbox (appender + relay + sender pair), consumer handler
+- `config/` - RocketMQ producer/consumer wiring, relay scheduling
 - `exception/` - domain exceptions + `GlobalExceptionHandler`
 
 Ubiquitous language is fixed in [CONTEXT.md](CONTEXT.md); the schema is in [init.sql](init.sql). For an exhaustive file-by-file tour (every class, the schema column by column, and what each test proves), see [docs/code-walkthrough.md](docs/code-walkthrough.md).
@@ -166,4 +168,4 @@ Deliberate trade-offs at homework scale, with the production evolution named for
 - **History query**: `WHERE from_user_id = :u OR to_user_id = :u` defeats single-column indexes (MySQL manages an index merge at best), and the `COUNT(*)` for page metadata repeats that scan on every page. The evolution is a `UNION ALL` over the two indexed halves plus keyset pagination; the spec lists keyset as out of scope, so the OR-query stays for readability.
 - **Offset pagination drift**: a row inserted while a client pages can shift entries between pages. Keyset pagination (`WHERE (created_at, id) < (:cursor...)`) is the same evolution as above.
 - **Cache-aside stale-read race**: `getBalance` reads MySQL then `put`s into Redis; a transfer committing between those two steps can leave a stale cached balance until the next eviction or the 5-minute TTL. This is the classic cache-aside window; the TTL bounds it, and no decision ever reads the cache.
-- **Best-effort event publish**: a crash between the DB commit and the RocketMQ send loses that event (audit log misses one row). The evolution is a transactional outbox, called out in section 4 and in the publisher code.
+- **Outbox relay is a polling singleton job**: publish reliability is solved (transactional outbox, section 4), but the relay polls every second - that adds up to ~1s delivery latency, and with many app instances every instance polls the same table, so an event can be sent more than once (safe, since the consumer is idempotent, but wasted work). The evolution is relay coordination - `SELECT ... FOR UPDATE SKIP LOCKED` row claims or a scheduler lock (ShedLock) - and, at larger scale, change-data-capture (e.g. Debezium reading the binlog) instead of polling.

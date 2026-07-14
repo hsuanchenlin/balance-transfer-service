@@ -16,6 +16,15 @@ spring:
       host: localhost
       port: 6379
 
+# Transactional outbox relay: the scheduled poller that delivers committed
+# outbox_event rows to RocketMQ (see event/OutboxRelay). Custom properties;
+# tests set enabled=false and drive relay passes deterministically.
+outbox:
+  relay:
+    enabled: true
+    poll-interval-ms: 1000
+    batch-size: 100
+
 # RocketMQ is driven by the raw rocketmq-client (wired in ticket 06); these are custom properties.
 rocketmq:
   enabled: true

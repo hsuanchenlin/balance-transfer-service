@@ -30,7 +30,10 @@ import java.util.Set;
  * removes them when the JVM exits.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@TestPropertySource(properties = "rocketmq.enabled=false")
+// RocketMQ stays off (no broker in the suite) and the outbox relay's background
+// scheduler is disabled so tests can drive relay passes deterministically via
+// OutboxRelay.relayOnce(); OutboxRelaySchedulingIT opts the scheduler back in.
+@TestPropertySource(properties = {"rocketmq.enabled=false", "outbox.relay.enabled=false"})
 public abstract class AbstractIntegrationTest {
 
     // Docker Engine 29+ rejects Docker API versions below 1.44 with HTTP 400, and
@@ -85,6 +88,7 @@ public abstract class AbstractIntegrationTest {
     @BeforeEach
     void cleanState() {
         jdbc.sql("DELETE FROM audit_log").update();
+        jdbc.sql("DELETE FROM outbox_event").update();
         // Reversal rows carry a self-FK (reversal_of → transfer.id), so delete the
         // children before the transfers they point at, then the accounts.
         jdbc.sql("DELETE FROM transfer WHERE reversal_of IS NOT NULL").update();
