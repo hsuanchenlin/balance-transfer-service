@@ -37,8 +37,25 @@ services:
       JAVA_OPT_EXT: "-Xms256m -Xmx256m -Xmn128m"
     command: sh mqnamesrv
     healthcheck:
-      # namesrv speaks the RocketMQ remoting protocol, not HTTP - probe the TCP port
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/127.0.0.1/9876"]
+      # namesrv speaks the RocketMQ remoting protocol, not HTTP - probe for a
+      # LISTEN socket on port 9876 (hex 2694) straight from procfs. Unlike the
+      # old `echo > /dev/tcp/...` this needs no bash builtins - only grep, which
+      # RocketMQ's own launch scripts already require - so it survives an image
+      # swap to a bash-less variant. The two patterns match the IPv6 dual-stack
+      # and plain IPv4 listen entries; state 0A is TCP_LISTEN.
+      # (Rejected alternatives: mqadmin exits 0 even on connection failure and
+      # boots a JVM per probe; curl telnet:// cannot exit 0 against a server
+      # that sends no banner.)
+      test:
+        [
+          "CMD",
+          "grep",
+          "-q",
+          "-e", ":2694 00000000000000000000000000000000:0000 0A",
+          "-e", ":2694 00000000:0000 0A",
+          "/proc/net/tcp",
+          "/proc/net/tcp6",
+        ]
       interval: 15s
       timeout: 10s
       retries: 5

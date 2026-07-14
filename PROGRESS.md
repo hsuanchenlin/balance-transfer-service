@@ -20,7 +20,7 @@ A RESTful balance-transfer service (Spring Boot 3 / Java 21, MySQL + Redis + Roc
 
 All five assignment endpoints are implemented; README/HELP/curl submission docs are written.
 
-**Tests:** 47 pass + 1 documented skip via `mvn verify` (surefire 11 unit + failsafe 37 IT).
+**Tests:** 49 pass + 1 documented skip via `mvn verify` (surefire 11 unit + failsafe 39 IT).
 **Git:** **PR #1** (https://github.com/hsuanchenlin/balance-transfer-service/pull/1) was **merged into `main`** on 2026-07-13 (merge commit `b986e50`). All work from branch `balance-transfer-service` (tickets 01–09, including history + cancel + submission docs and the `markCancelled` reversal-row regression fix) has fully landed on `main`. New work starts on a fresh branch/PR off `main`.
 
 ## How to run
@@ -89,7 +89,7 @@ A staff-level review of the whole codebase lives in `.scratch/balance-transfer-s
 - **Postman collection:** `scripts/balance-transfer.postman_collection.json` - the curl walkthrough as a runnable collection with per-request assertions (21 requests, 30 assertions); verified green with `npx newman run` against the live app.
 - **Dependency hygiene:** removed the baseline skeleton's `dependencyManagement` block that force-downgraded RocketMQ's transitive gRPC to 1.33.0 (2020, CVE-carrying Netty bundle); gRPC now resolves to 1.53.0, the version `rocketmq-client` 5.3.2 itself manages. Verified via `dependency:tree`, full suite, and a live boot + transfer with RocketMQ enabled.
 - **Self-contained test suite:** `AbstractIntegrationTest` now starts its own Testcontainers MySQL (seeded with `init.sql`) and Redis instead of pointing at the compose stack, so `./mvnw verify` runs anywhere with a Docker daemon (verified green with the compose MySQL/Redis stopped). Unblocked by diagnosing the Docker 29 gotcha: the engine 400s Docker API handshakes below 1.44, fixed by pinning docker-java's `api.version=1.44` (see gotcha 1).
-- **RocketMQ pipeline verified end-to-end:** `RocketMqSmokeIT` is now a real opt-in test (`ROCKETMQ_SMOKE=true`) proving transfer → broker → push consumer → `audit_log` row against the compose stack, green in ~33s. Unblocked by fixing the broker environment (see gotcha 2): the stale single-file bind mount meant `brokerIP1` had never taken effect, and the unused timer-wheel store made emulated boots hang, now `timerWheelEnable=false`. Also fixed the namesrv compose healthcheck (it probed HTTP against the binary remoting port and reported `unhealthy` forever; now a TCP probe, container reports `healthy`).
+- **RocketMQ pipeline verified end-to-end:** `RocketMqSmokeIT` is now a real opt-in test (`ROCKETMQ_SMOKE=true`) proving transfer → broker → push consumer → `audit_log` row against the compose stack, green in ~33s. Unblocked by fixing the broker environment (see gotcha 2): the stale single-file bind mount meant `brokerIP1` had never taken effect, and the unused timer-wheel store made emulated boots hang, now `timerWheelEnable=false`. Also fixed the namesrv compose healthcheck (it probed HTTP against the binary remoting port and reported `unhealthy` forever; now a bash-free LISTEN-socket probe, see the comment in `docker-compose.yaml`, and the container reports `healthy`).
 
 ## To continue (workflow for future changes)
 
