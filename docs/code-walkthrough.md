@@ -377,12 +377,13 @@ docker-java's `api.version=1.44` (Docker Engine 29+ rejects the bundled
 client's default 1.32 handshake with HTTP 400), and `@DynamicPropertySource`
 rewires the datasource and Redis properties to the containers' mapped ports.
 
-Current totals: 45 passing (unit via surefire, `*IT` via failsafe) + 1
-documented skip.
+Current pass/skip totals live in [PROGRESS.md](../PROGRESS.md) (unit via
+surefire, `*IT` via failsafe).
 
 | Class | Kind | Proves |
 |---|---|---|
 | [`TransferConcurrencyIT`](../src/test/java/com/example/demo/TransferConcurrencyIT.java) | IT | The centerpiece: under concurrent overspend and bidirectional storms, no lost updates, no negative balance, total money conserved. |
+| [`TransferConservationStressIT`](../src/test/java/com/example/demo/TransferConservationStressIT.java) | IT | Complements the fixed-pair storms with a random-pair storm from a fixed-seed schedule: total conserved, no negative balance, COMPLETED ledger rows match 201 responses one-to-one (replaying them reproduces every final balance), concurrent identical retries apply exactly once, and the cached read path agrees with the DB. |
 | [`TransferEndpointIT`](../src/test/java/com/example/demo/TransferEndpointIT.java) | IT | Happy path 201 + the 4xx contract (insufficient funds, unknown parties, self-transfer, non-positive amount). |
 | [`TransferIdempotencyIT`](../src/test/java/com/example/demo/TransferIdempotencyIT.java) | IT | Sequential replay returns the original; payload mismatch is 422 and moves no money; scale-insensitive amount comparison; concurrent duplicates apply exactly once. |
 | [`TransferCancelIT`](../src/test/java/com/example/demo/TransferCancelIT.java) | IT | Reversal restores balances; double-cancel idempotent; 409 when receiver can't cover, outside the window, or target is a reversal; 404 unknown. |
