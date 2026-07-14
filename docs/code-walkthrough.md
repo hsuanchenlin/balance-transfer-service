@@ -357,9 +357,10 @@ them are documented in the README's Test and CI sections).
   `mysqladmin ping`; data persisted in the `mysql_data` volume.
 - **redis** (7, port 6379) - no auth, dev only; `redis_data` volume.
 - **rocketmq-namesrv** (5.1.4, port 9876) - routing registry. Its healthcheck
-  is a plain TCP probe (`bash -c 'echo > /dev/tcp/...'`) because namesrv speaks
-  the binary remoting protocol, not HTTP - an HTTP `curl` check reports
-  `unhealthy` forever.
+  greps `/proc/net/tcp{,6}` for a LISTEN socket on 9876 (no shell or bash in
+  the probe) because namesrv speaks the binary remoting protocol, not HTTP -
+  an HTTP `curl` check reports `unhealthy` forever. The rationale and rejected
+  alternatives live in the comment in `docker-compose.yaml`.
 - **rocketmq-broker** (5.1.4, ports 10911/10909) - loads `broker.conf`, whose
   two load-bearing lines are `brokerIP1 = 127.0.0.1` (advertise a
   host-reachable address so the app and tests on the host can publish/consume;
