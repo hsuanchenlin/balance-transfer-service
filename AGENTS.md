@@ -25,6 +25,7 @@ Design canon to respect: `CONTEXT.md` (glossary), `docs/adr/*` (ADR-0001 DB-as-a
 - `./mvnw spring-boot:run` — run locally
 - `./mvnw test` — run tests
 - `./mvnw -Dtest=<ClassName> test` — run a single test class
+- `./mvnw verify` — full suite plus quality gates: JaCoCo >= 90% line coverage and SpotBugs High-priority findings both fail the build. CI (`.github/workflows/ci.yml`) runs the same on PRs and pushes to `main`.
 - `./mvnw package` — build the jar
 - `docker compose up -d` — start MySQL/Redis/RocketMQ dependencies
 

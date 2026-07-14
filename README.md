@@ -123,6 +123,21 @@ The suite is self-contained: integration tests start their own Testcontainers
 MySQL (seeded with the same `init.sql` as compose) and Redis, so only a Docker
 daemon is required - the compose stack is for running the app itself.
 
+`verify` also runs two quality gates that fail the build on violation:
+
+- **Coverage** - JaCoCo enforces >= 90% line coverage (unit + integration combined).
+  The HTML report lands in `target/site/jacoco/index.html`.
+- **Static analysis** - SpotBugs fails on High-priority findings
+  (`./mvnw spotbugs:gui` to browse a report interactively).
+
+## CI
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every pull request and
+on pushes to `main`: it starts the compose MySQL + Redis on the runner, waits for the
+`init.sql` schema, then runs `./mvnw -B verify` - the same tests and gates as locally.
+RocketMQ is not started; tests run with `rocketmq.enabled=false` and the live smoke
+test stays `@Disabled`.
+
 ## Architecture
 
 Standard layered structure under `src/main/java/com/example/demo/`:
