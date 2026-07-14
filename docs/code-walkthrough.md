@@ -222,7 +222,9 @@ correctness story lives in the exact SQL, so it is kept visible.
   wraps `StringRedisTemplate` with keys `balance:{userId}`, values stored via
   `BigDecimal.toPlainString()`, TTL 5 minutes. Two properties matter:
   - *Fail-open*: every operation catches `DataAccessException` and degrades
-    (a failed `get` is a miss, a failed `put`/`evict` is a logged no-op).
+    (a failed `get` is a miss, a failed `put`/`evict` is a logged no-op), and
+    a cached value that fails to parse as a number is evicted and treated as
+    a miss rather than throwing on every read.
     Because the DB is the authority, a Redis outage must never fail a request;
     before this hardening, a dead Redis 500'd balance reads and even committed
     transfers (the afterCommit eviction threw).
@@ -293,7 +295,10 @@ correctness story lives in the exact SQL, so it is kept visible.
 
   The `ErrorResponse` special case in the catch-all is the subtle part: Spring
   Boot 3 routes unknown URLs through `NoResourceFoundException`, which a naive
-  `@ExceptionHandler(Exception.class)` would turn into a 500.
+  `@ExceptionHandler(Exception.class)` would turn into a 500. The catch-all
+  also preserves the headers the `ErrorResponse` mandates (e.g. `Allow` on a
+  405), falls back to 500 for status codes outside the `HttpStatus` enum, and
+  logs the stack for any 5xx it passes through.
 - The seven domain exception classes are one-liners; the two with javadoc
   worth reading are
   [`CancellationNotAllowedException`](../src/main/java/com/example/demo/exception/CancellationNotAllowedException.java)
@@ -372,7 +377,7 @@ docker-java's `api.version=1.44` (Docker Engine 29+ rejects the bundled
 client's default 1.32 handshake with HTTP 400), and `@DynamicPropertySource`
 rewires the datasource and Redis properties to the containers' mapped ports.
 
-Current totals: 42 passing (unit via surefire, `*IT` via failsafe) + 1
+Current totals: 45 passing (unit via surefire, `*IT` via failsafe) + 1
 documented skip.
 
 | Class | Kind | Proves |
@@ -386,7 +391,8 @@ documented skip.
 | [`BalanceCacheIT`](../src/test/java/com/example/demo/BalanceCacheIT.java) | IT | Cache-aside works: second read served from Redis without hitting MySQL; a transfer evicts. |
 | [`AuditIdempotencyIT`](../src/test/java/com/example/demo/AuditIdempotencyIT.java) | IT | Redelivering the same event to the handler writes exactly one audit row (no broker needed). |
 | [`ErrorModelIT`](../src/test/java/com/example/demo/ErrorModelIT.java) | IT | Malformed JSON (400), unsupported method (405) and unknown route (404) all come back in the `ApiError` shape. |
-| [`BalanceCacheTest`](../src/test/java/com/example/demo/cache/BalanceCacheTest.java) | unit | The fail-open contract: get degrades to a miss, put/evict swallow Redis failures, hits parse. |
+| [`BalanceCacheTest`](../src/test/java/com/example/demo/cache/BalanceCacheTest.java) | unit | The fail-open contract: get degrades to a miss, put/evict swallow Redis failures, hits parse, an unparseable entry is evicted and treated as a miss. |
+| [`GlobalExceptionHandlerTest`](../src/test/java/com/example/demo/exception/GlobalExceptionHandlerTest.java) | unit | The catch-all keeps the `ApiError` shape for `ErrorResponse` exceptions: non-enum status codes fall back to 500, mandated headers (e.g. `Allow` on 405) survive. |
 | [`TransferEventHandlerTest`](../src/test/java/com/example/demo/event/TransferEventHandlerTest.java) | unit | Handler records audit (cancelled events keyed on the original id) and evicts both balances. |
 | [`RocketMqTransferEventPublisherTest`](../src/test/java/com/example/demo/event/RocketMqTransferEventPublisherTest.java) | unit | The publisher serializes the event and targets the configured topic. |
 | [`DemoApplicationTests`](../src/test/java/com/example/demo/DemoApplicationTests.java) | unit | The Spring context wires up (smoke). |

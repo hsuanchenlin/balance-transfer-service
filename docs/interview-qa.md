@@ -221,8 +221,8 @@ engine. Hence the failsafe suite (`*IT`, `AbstractIntegrationTest`) boots the
 real app against a Testcontainers-managed MySQL 8 seeded with the production
 `init.sql`, plus a Redis container, and asserts external behavior - HTTP codes,
 resulting balances, conservation of total money - while a few genuine units
-(cache fail-open, event handler, publisher serialization) are surefire unit
-tests with mocks. The suite is fully self-contained: `./mvnw verify` needs a
+(cache fail-open, error-model catch-all, event handler, publisher
+serialization) are surefire unit tests with mocks. The suite is fully self-contained: `./mvnw verify` needs a
 Docker daemon and nothing else.
 
 ### Q15. What error contract does the API promise?
