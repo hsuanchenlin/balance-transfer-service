@@ -6,7 +6,7 @@ Stack: Spring Boot 3, Java 21, Maven. MySQL (persistence), Redis (cache/lock), R
 
 ## ⚑ Start here — resume in progress
 
-**Read [`PROGRESS.md`](PROGRESS.md) first.** It is the handoff/status doc: what's done (all tickets 01–09), how to run, the architecture map, and the environment gotchas below. Work continues on branch `balance-transfer-service` (open as PR #1).
+**Read [`PROGRESS.md`](PROGRESS.md) first.** It is the handoff/status doc: what's done (all tickets 01–09), how to run, the architecture map, and the environment gotchas below. All tickets are merged to `main` (PR #1, merge commit `b986e50`); start new work on a fresh branch/PR off `main`.
 
 Environment gotchas that will bite you if unread (details in PROGRESS.md):
 - **Testcontainers doesn't work here** (Docker 29.x vs bundled docker-java → HTTP 400). Integration tests run against the **compose MySQL** — run `docker compose up -d` before `./mvnw verify`.
@@ -29,7 +29,7 @@ Design canon to respect: `CONTEXT.md` (glossary), `docs/adr/*` (ADR-0001 DB-as-a
 - `docker compose up -d` — start MySQL/Redis/RocketMQ dependencies
 
 ## Conventions
-- Domain vocabulary lives in `CONTEXT.md` (once created). Use its terms, don't drift to synonyms.
+- Domain vocabulary lives in `CONTEXT.md`. Use its terms, don't drift to synonyms.
 - Transfers must be atomic — no partial debit/credit.
 - `userId` is unique.
 
@@ -51,3 +51,10 @@ Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `
 ### Domain docs
 
 Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+## Maintaining this file
+
+Keep this file for knowledge useful to almost every future agent session in this project.
+Do not repeat what the codebase already shows; point to the authoritative file or command instead.
+Prefer rewriting or pruning existing entries over appending new ones.
+When updating this file, preserve this bar for all agents and keep entries concise.

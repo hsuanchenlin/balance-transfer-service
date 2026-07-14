@@ -1,6 +1,6 @@
 # Balance Transfer Service — Progress & Handoff
 
-_Last updated: 2026-07-13. Resume point for a fresh Claude Code CLI session._
+_Last updated: 2026-07-14. Resume point for a fresh Claude Code CLI session._
 
 A RESTful balance-transfer service (Spring Boot 3 / Java 21, MySQL + Redis + RocketMQ), built from a homework skeleton with a spec → ADRs → tickets → TDD workflow.
 
@@ -21,7 +21,7 @@ A RESTful balance-transfer service (Spring Boot 3 / Java 21, MySQL + Redis + Roc
 All five assignment endpoints are implemented; README/HELP/curl submission docs are written.
 
 **Tests:** 32 pass + 1 documented skip via `mvn verify` (surefire 4 unit + failsafe 28 IT).
-**Git:** branch `balance-transfer-service`, open as **PR #1** → https://github.com/hsuanchenlin/balance-transfer-service/pull/1. Tickets 07–09 are committed (history + cancel + submission docs, plus a `markCancelled` reversal-row regression fix).
+**Git:** **PR #1** (https://github.com/hsuanchenlin/balance-transfer-service/pull/1) was **merged into `main`** on 2026-07-13 (merge commit `b986e50`). All work from branch `balance-transfer-service` (tickets 01–09, including history + cancel + submission docs and the `markCancelled` reversal-row regression fix) has fully landed on `main`.
 
 ## How to run
 
@@ -78,8 +78,10 @@ Design canon (READ THESE before changing behavior):
 
 1. Test-first: name tests `*IT` for integration (real MySQL, runs in `mvn verify`) or `*Test` for unit (surefire).
 2. `docker compose up -d`, then failing test → minimal code → `./mvnw verify` green.
-3. Commit (`Ticket 0N: <title>` — do **not** add an agent co-author per repo convention) and `git push` (extends PR #1).
+3. Commit (`Ticket 0N: <title>` — do **not** add an agent co-author per repo convention). PR #1 is merged, so start future work on a **new branch off `main`** and open a new PR; do not reuse `balance-transfer-service`.
 
-### Not yet done
-- **Push the branch** to extend PR #1 (tickets 07–09 are committed locally).
-- Optional: a Postman collection (curl script covers the same ground); resolving the Testcontainers / RocketMQ-smoke gotchas above.
+### Optional follow-ups (no pending assignment work)
+The assignment is complete and merged; nothing is required. If someone wants to polish further:
+- A Postman collection (the curl script already covers the same ground).
+- Resolving the Testcontainers gotcha (env gotcha 1 above) so ITs no longer need the compose MySQL.
+- Un-disabling the RocketMQ smoke test once the broker is host-reachable (env gotcha 2 above).
