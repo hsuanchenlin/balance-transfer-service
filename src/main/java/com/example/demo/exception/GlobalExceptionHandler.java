@@ -114,6 +114,9 @@ public class GlobalExceptionHandler {
             if (status == null) {
                 status = HttpStatus.INTERNAL_SERVER_ERROR;
             }
+            if (status.is5xxServerError()) {
+                log.error("Unhandled exception for {} {}", req.getMethod(), req.getRequestURI(), ex);
+            }
             return build(status, status.getReasonPhrase(), req, springError.getHeaders());
         }
         log.error("Unhandled exception for {} {}", req.getMethod(), req.getRequestURI(), ex);
