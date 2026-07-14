@@ -6,7 +6,7 @@ Stack: Spring Boot 3, Java 21, Maven. MySQL (persistence), Redis (cache/lock), R
 
 ## ⚑ Start here — resume in progress
 
-**Read [`PROGRESS.md`](PROGRESS.md) first.** It is the handoff/status doc: what's done (all tickets 01–09), how to run, the architecture map, and the environment gotchas below. Work continues on branch `balance-transfer-service` (open as PR #1).
+**Read [`PROGRESS.md`](PROGRESS.md) first.** It is the handoff/status doc: what's done (all tickets 01–09), how to run, the architecture map, and the environment gotchas below. All tickets are merged to `main` (PR #1, merge commit `b986e50`); start new work on a fresh branch/PR off `main`.
 
 Environment gotchas that will bite you if unread (details in PROGRESS.md):
 - **Testcontainers doesn't work here** (Docker 29.x vs bundled docker-java → HTTP 400). Integration tests run against the **compose MySQL** — run `docker compose up -d` before `./mvnw verify`.
