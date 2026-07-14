@@ -17,6 +17,7 @@ import com.example.demo.event.TransferCompletedEvent;
 import com.example.demo.event.TransferEventPublisher;
 import com.example.demo.repository.AccountRepository;
 import com.example.demo.repository.TransferRepository;
+import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -102,10 +103,21 @@ public class TransferService {
             // Lost a concurrent race on the same requestId - roll this attempt back
             // (the balance changes above are undone) so the transfer applies once.
             // Classify the loser exactly like the sequential path: a reused key with
-            // a different payload is a client bug (422), not a retry (409).
-            boolean conflictingPayload = transfers.findByRequestIdForShare(requestId)
-                    .map(winner -> !samePayload(winner, request))
-                    .orElse(false);
+            // a different payload is a client bug (422), not a retry (409). The
+            // classification read is best-effort: we still hold both account-row
+            // locks here while cancel() locks the transfer row first, so reading the
+            // winner's row can deadlock or hit the lock-wait timeout against a
+            // concurrent cancel of the winner. On such a lock conflict fall back to
+            // the conservative 409; a client retry takes the sequential path and
+            // gets the precise 409-vs-422 answer.
+            boolean conflictingPayload;
+            try {
+                conflictingPayload = transfers.findByRequestIdForShare(requestId)
+                        .map(winner -> !samePayload(winner, request))
+                        .orElse(false);
+            } catch (ConcurrencyFailureException lockConflict) {
+                conflictingPayload = false;
+            }
             if (conflictingPayload) {
                 throw new IdempotencyConflictException(requestId);
             }

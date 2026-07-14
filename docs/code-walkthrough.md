@@ -145,8 +145,13 @@ All six are Java records: immutable, value-semantics, no boilerplate.
      row with a locking read (`FOR SHARE`, because the plain-read snapshot
      predates the winner's commit) and classifies exactly like step 2: same
      payload throws `DuplicateRequestException` (409), a different payload
-     throws `IdempotencyConflictException` (422). Either way this attempt's
-     balance changes roll back - the transfer applies at most once.
+     throws `IdempotencyConflictException` (422). The locking read is
+     best-effort: the loser still holds both account-row locks while a
+     concurrent cancel of the winner locks the transfer row first, so on a
+     deadlock or lock-wait timeout the loser falls back to the conservative
+     409 (a retry then gets the precise answer via step 2) instead of
+     surfacing a 500. Either way this attempt's balance changes roll back -
+     the transfer applies at most once.
   5. Register an `afterCommit` hook: evict both cached balances, publish
      `TransferCompletedEvent`. Side-effects run only if the commit succeeded,
      and the write transaction never blocks on Redis or RocketMQ.
