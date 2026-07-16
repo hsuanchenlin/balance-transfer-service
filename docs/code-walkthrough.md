@@ -8,9 +8,6 @@ Companion docs, each with a different job:
 
 - [README.md](../README.md) - the design rationale (the "why" behind the five
   load-bearing decisions) and the API reference.
-- [docs/interview-qa.md](interview-qa.md) - a 5-minute code map plus answers to
-  15 interviewer questions. Read that for the narrative; read this file for
-  exhaustive coverage.
 - [CONTEXT.md](../CONTEXT.md) and [docs/adr/](adr/) - the domain glossary and
   the two architecture decision records the code keeps citing.
 
@@ -437,8 +434,7 @@ docker-java's `api.version=1.44` (Docker Engine 29+ rejects the bundled
 client's default 1.32 handshake with HTTP 400), and `@DynamicPropertySource`
 rewires the datasource and Redis properties to the containers' mapped ports.
 
-Current pass/skip totals live in [PROGRESS.md](../PROGRESS.md) (unit via
-surefire, `*IT` via failsafe).
+Unit tests run via surefire and `*IT` integration tests via failsafe.
 
 | Class | Kind | Proves |
 |---|---|---|

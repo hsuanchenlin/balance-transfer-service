@@ -2,6 +2,8 @@
 
 A RESTful service for holding per-user credit and moving it between users **atomically**, built with Spring Boot 3 (Java 21) on MySQL, Redis, and RocketMQ.
 
+The original assignment brief is preserved at [docs/assignment.md](docs/assignment.md).
+
 The interesting part of this problem is not the CRUD - it is keeping money correct under concurrency and across app instances. This README leads with the reasoning behind those decisions; the two ADRs under [`docs/adr/`](docs/adr) are the long form.
 
 ---
